@@ -1,6 +1,6 @@
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **31 Claude Code skills** and
+One protocol for authorized bug-bounty and web-security work, as **32 Claude Code skills** and
 three helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
@@ -47,7 +47,7 @@ up anything it would displace, and `./install.sh --remove` undoes all of it.
 Or just open Claude Code in this directory and say **"check this"** — `CLAUDE.md` tells Claude
 what to do.
 
-## The 31 skills
+## The 32 skills
 
 | | |
 |---|---|
@@ -59,7 +59,7 @@ what to do.
 | **server-side logic** | `zp-ssrf` `zp-smuggling` `zp-cache-poison` `zp-race` |
 | **interfaces** | `zp-api` `zp-graphql` `zp-cors` |
 | **platforms** | `zp-cloud` `zp-mobile` `zp-web3` `zp-code-audit` |
-| **known CVEs** | `zp-cve-2026-41940` — cPanel/WHM pre-auth bypass |
+| **known CVEs** | `zp-cve-2026-41940` — cPanel/WHM pre-auth bypass · `zp-cve-lightrag` — three LightRAG advisories |
 | **output** | `zp-triage` `zp-report` |
 
 Each one carries its gate, an executable procedure, real commands with a documented fallback for

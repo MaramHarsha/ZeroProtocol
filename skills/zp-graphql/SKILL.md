@@ -39,6 +39,14 @@ jq -r '.data.__schema.types[] | select(.name=="Query" or .name=="Mutation") | .f
 jq -r '.data.__schema.types[] | select(.fields) | .name as $t | .fields[] | "\($t).\(.name)"' schema.json | head -80
 ```
 
+That query is deliberately short so it is easy to paste. It is **not** a full introspection
+query: it omits `queryType`/`mutationType`/`subscriptionType`, `directives`, `enumValues`,
+`interfaces`/`possibleTypes`, and it unwraps `ofType` only two levels, so it misses enums,
+unions, interfaces and deeply-wrapped types like `[[User!]!]!`. It also assumes the root types
+are literally named `Query` and `Mutation`, which is conventional but not required. When you need
+the complete schema, use the standard full introspection query (the one GraphiQL sends) or
+`graphql-inspector`/`gql-cli`, and diff the operation list against what the bundle actually calls.
+
 Introspection disabled? Three ways forward:
 
 ```bash

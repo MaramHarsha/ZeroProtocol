@@ -180,6 +180,7 @@ Then dispatch in this order:
 | source in hand | `zp-code-audit` |
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
+| LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
 
 **Depth floor per dispatched class.** Before you may write the word *exhausted*: build
 the variant matrix `method x content-type x auth-state x encoding x transport` first,
@@ -311,7 +312,8 @@ seed notes; `zp-memory-seed` copies them in.
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
-**Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass)
+**Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
+LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
 **Output** - `zp-triage`, `zp-report`
 
 Known-CVE skills are checks against a *specific* published vulnerability, and they verify
