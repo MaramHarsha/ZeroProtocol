@@ -4,7 +4,7 @@
 
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **32 Claude Code skills**,
+One protocol for authorized bug-bounty and web-security work, as **36 Claude Code skills**,
 **5 agents** and four helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
@@ -51,18 +51,19 @@ up anything it would displace, and `./install.sh --remove` undoes all of it.
 Or just open Claude Code in this directory and say **"check this"** — `CLAUDE.md` tells Claude
 what to do.
 
-## The 32 skills
+## The 36 skills
 
 | | |
 |---|---|
 | **router** | `zeroprotocol` — owns the pipeline, the ranking, and the dispatch table |
 | **gate & setup** | `zp-scope` `zp-toolchain` `zp-proxy` |
 | **recon** | `zp-recon-passive` `zp-recon-active` `zp-content-discovery` `zp-js-secrets` `zp-takeover` |
-| **injection** | `zp-xss` `zp-sqli` `zp-rce-ssti` `zp-xxe-lfi` `zp-upload` |
+| **injection** | `zp-xss` `zp-sqli` `zp-rce-ssti` `zp-xxe-lfi` `zp-upload` `zp-proto-pollution` |
 | **access control** | `zp-idor` `zp-authz` `zp-jwt-oauth` |
-| **server-side logic** | `zp-ssrf` `zp-smuggling` `zp-cache-poison` `zp-race` |
+| **server-side logic** | `zp-ssrf` `zp-smuggling` `zp-cache-poison` `zp-race` `zp-business-logic` |
 | **interfaces** | `zp-api` `zp-graphql` `zp-cors` |
 | **platforms** | `zp-cloud` `zp-mobile` `zp-web3` `zp-code-audit` |
+| **AI systems** | `zp-llm` `zp-agentic` |
 | **known CVEs** | `zp-cve-2026-41940` — cPanel/WHM pre-auth bypass · `zp-cve-lightrag` — three LightRAG advisories |
 | **output** | `zp-triage` `zp-report` |
 
@@ -129,7 +130,9 @@ files) — among them [uphiago/recon-skills](https://github.com/uphiago/recon-sk
 [PatrikFehrenbach/h1-brain](https://github.com/PatrikFehrenbach/h1-brain),
 [trailofbits/skills](https://github.com/trailofbits/skills),
 [yaklang/hack-skills](https://github.com/yaklang/hack-skills) and
-[snailsploit/claude-red](https://github.com/snailsploit/claude-red). ZeroProtocol is a rewrite,
+[snailsploit/claude-red](https://github.com/snailsploit/claude-red) and
+[usestrix/strix](https://github.com/usestrix/strix) (Apache-2.0, the reference for the AI,
+business-logic and prototype-pollution classes). ZeroProtocol is a rewrite,
 not a repackage: the phase gates, the mechanical scope enforcement, the per-class stop points and
 the degradation contract are its own.
 

@@ -1,11 +1,11 @@
 ---
 name: zeroprotocol
-description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its thirty-one zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
+description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its thirty-five zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
 ---
 
 # ZeroProtocol
 
-One protocol over thirty-one focused skills. You are handed a target; you return
+One protocol over thirty-five focused skills. You are handed a target; you return
 reproduced, in-scope, impact-bearing findings written the way a triager wants to read
 them - or you return an honest, evidenced "nothing here", which is also a result.
 
@@ -178,6 +178,10 @@ Then dispatch in this order:
 | an APK/IPA in scope | `zp-mobile` |
 | a contract address or chain asset in scope | `zp-web3` |
 | source in hand | `zp-code-audit` |
+| chatbot, AI assistant, AI search, summarise/translate feature, RAG pipeline | `zp-llm` |
+| the AI can call tools, install plugins/MCP servers, keep memory, or delegate | `zp-agentic` |
+| checkout, payments, refunds, subscriptions, quotas, invites, approvals | `zp-business-logic` |
+| Node/Express/Next/SPA target, JSON merge or clone, query-string-to-object parsing | `zp-proto-pollution` |
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
 | LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
@@ -335,11 +339,12 @@ seed notes; `zp-memory-seed` copies them in.
 
 **Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`
-**Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`
+**Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`
-**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`
+**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
+**AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
 **Output** - `zp-triage`, `zp-report`
