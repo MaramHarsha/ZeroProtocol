@@ -1,6 +1,6 @@
 ---
 name: zp-report
-description: ZeroProtocol phase 8 - write the vulnerability report a triager can accept without asking a question. Use when a finding has passed zp-triage, when drafting a HackerOne, Bugcrowd, Intigriti, YesWeHack or Immunefi submission, when writing reproduction steps, packaging a PoC, or preparing a disclosure email for a self-hosted program. Never submits anything: a human approves and sends every report.
+description: ZeroProtocol phase 8 - write the vulnerability report a triager can accept without asking a question. Use when a finding has passed zp-triage, when drafting a HackerOne, Bugcrowd, Intigriti, YesWeHack or Immunefi submission, when writing reproduction steps, packaging a PoC, or preparing a disclosure email for a self-hosted program. Never submits anything - a human approves and sends every report.
 ---
 
 # zp-report - write it so it cannot be misread

@@ -34,7 +34,14 @@ ROUTER = "zeroprotocol"
 
 
 def parse_frontmatter(text: str):
-    """Return (dict, body, error). Only the flat `key: value` subset is allowed."""
+    """Return (dict, body, error).
+
+    Claude Code parses this block as real YAML, so we must too. When PyYAML is
+    available we use it and surface its exact error; otherwise we fall back to the
+    flat `key: value` reader below, plus an explicit check for the one construct
+    that silently broke two skills: an unquoted value containing ": ", which YAML
+    reads as a nested mapping ("mapping values are not allowed in this context").
+    """
     if not text.startswith("---"):
         return None, text, "no YAML frontmatter (file must start with ---)"
     end = text.find("\n---", 3)
@@ -42,6 +49,30 @@ def parse_frontmatter(text: str):
         return None, text, "frontmatter is not terminated by a --- line"
     raw = text[3:end].strip("\n")
     body = text[end + 4:]
+
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+
+    if yaml is not None:
+        try:
+            loaded = yaml.safe_load(raw)
+        except yaml.YAMLError as e:
+            mark = getattr(e, "problem_mark", None)
+            where = f" at line {mark.line + 1} column {mark.column + 1}" if mark else ""
+            return None, body, (f"frontmatter is not valid YAML{where}: "
+                                f"{getattr(e, 'problem', e)}. A value containing ': ' "
+                                f"must be quoted or rephrased")
+        if not isinstance(loaded, dict):
+            return None, body, "frontmatter must be a mapping of key: value"
+        return {k: ("" if v is None else v) for k, v in loaded.items()}, body, None
+
+    for line in raw.splitlines():
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$", line)
+        if m and m.group(2) and m.group(2)[0] not in "\"'" and re.search(r":\s", m.group(2)):
+            return None, body, (f"{m.group(1)}: unquoted value contains ': ', which YAML reads "
+                                f"as a nested mapping - quote it or rephrase")
     meta, key = {}, None
     for line in raw.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):

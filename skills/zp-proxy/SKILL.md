@@ -1,6 +1,6 @@
 ---
 name: zp-proxy
-description: ZeroProtocol integration for intercepting proxies - Caido, Burp Suite and mitmproxy. Use when a proxy is running or should be, when a captured traffic corpus exists, when replaying or mutating a saved request, when driving a proxy through its MCP server or API, or when the app is a SPA whose real requests are invisible to curl. A traffic corpus beats guessing: test the requests the app actually makes.
+description: ZeroProtocol integration for intercepting proxies - Caido, Burp Suite and mitmproxy. Use when a proxy is running or should be, when a captured traffic corpus exists, when replaying or mutating a saved request, when driving a proxy through its MCP server or API, or when the app is a SPA whose real requests are invisible to curl. A traffic corpus beats guessing - test the requests the app actually makes.
 ---
 
 # zp-proxy - test the requests the app really makes
