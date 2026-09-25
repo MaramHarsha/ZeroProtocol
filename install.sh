@@ -95,6 +95,16 @@ if [ "$MODE" = remove ]; then
     fi
   done
 
+  for a in "$REPO"/.claude/agents/zp-*.md; do
+    [ -f "$a" ] || continue
+    d="$CLAUDE_DIR/agents/$(basename "$a")"
+    if [ -L "$d" ] && [ "$(readlink "$d")" = "$a" ]; then
+      run "rm -f '$d'"; step "unlinked agent $(basename "${a%.md}")"
+    elif [ -f "$d" ] && cmp -s "$a" "$d"; then
+      run "rm -f '$d'"; step "removed copied agent $(basename "${a%.md}")"
+    fi
+  done
+
   # restore the newest backup, if any
   newest="$(find "$CLAUDE_DIR/zeroprotocol-backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1 || true)"
   if [ -n "$newest" ] && [ -d "$newest" ]; then
@@ -166,6 +176,35 @@ for s in "${SKILL_DIRS[@]}"; do
   fi
 done
 [ "$backed_up" -gt 0 ] && step "backups in $BACKUP_DIR (outside skills/, so they never load as duplicates)"
+
+# --------------------------------------------------------------------------- #
+# 1b. agents
+# --------------------------------------------------------------------------- #
+AGENTS_SRC="$REPO/.claude/agents"
+AGENTS_DST="$CLAUDE_DIR/agents"
+if [ -d "$AGENTS_SRC" ]; then
+  say ""
+  say "1b. Agents -> $AGENTS_DST"
+  run "mkdir -p '$AGENTS_DST'"
+  for a in "$AGENTS_SRC"/zp-*.md; do
+    [ -f "$a" ] || continue
+    n="$(basename "$a")"
+    dst="$AGENTS_DST/$n"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$a" ]; then
+      step "ok   ${n%.md}"; continue
+    fi
+    if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+      run "mkdir -p '$BACKUP_DIR/agents'"
+      run "mv '$dst' '$BACKUP_DIR/agents/$n'"
+      step "backed up an existing ${n%.md}"
+    fi
+    if [ "$MODE" = copy ]; then
+      run "cp -f '$a' '$dst'"; step "copied ${n%.md}"
+    else
+      run "ln -sfn '$a' '$dst'"; step "linked ${n%.md}"
+    fi
+  done
+fi
 
 # --------------------------------------------------------------------------- #
 # 2. helper programs on PATH

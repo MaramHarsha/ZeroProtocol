@@ -182,6 +182,34 @@ Then dispatch in this order:
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
 | LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
 
+## Agents
+
+Five agents ship with the pack, for when a phase is worth running in its own context. Use them
+when the work is wide (many sources, many hosts, many classes) or when a finding needs an
+independent second opinion; do the work inline when it is one host and one question.
+
+| Agent | Use it for | Gate |
+|---|---|---|
+| `zp-recon-sweep` | passive fan-out across sources, one root domain | none - sends nothing to the target |
+| `zp-surface-probe` | live-probe and rank **one** host | checks `zp-scope` itself |
+| `zp-class-hunter` | **one** class against **one** host, isolated context | checks `zp-scope` itself |
+| `zp-verifier` | adversarially refute a candidate finding | read-only on the target |
+| `zp-report-drafter` | turn a verified finding into a draft | **no network tools at all** |
+
+Parallelism that pays: one `zp-class-hunter` per (host, class) pair off the ranked queue, and one
+`zp-verifier` per candidate finding. Keep each invocation to a single host and a single class -
+that is what makes the coverage records honest.
+
+**Every dispatch must carry the rules of engagement.** A subagent inherits none of this session's
+context: paste the rate limit, the attribution header with its real value, the excluded classes and
+the target into the prompt. The agents re-check `zp-scope` themselves as a backstop, but the
+backstop is not the plan.
+
+`zp-verifier` runs **before** `zp-report-drafter`, always. Its default verdict is REFUTED when
+uncertain, which is the correct bias - a false positive costs signal with the program.
+
+---
+
 **Depth floor per dispatched class.** Before you may write the word *exhausted*: build
 the variant matrix `method x content-type x auth-state x encoding x transport` first,
 send a benign and a known-bad baseline to calibrate, walk the encoding ladder (raw ->
@@ -315,6 +343,7 @@ seed notes; `zp-memory-seed` copies them in.
 **Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
 **Output** - `zp-triage`, `zp-report`
+**Agents** - `zp-recon-sweep`, `zp-surface-probe`, `zp-class-hunter`, `zp-verifier`, `zp-report-drafter` (see Agents above)
 
 Known-CVE skills are checks against a *specific* published vulnerability, and they verify
 exposure and stop. They never carry a post-exploitation path, however available the access
