@@ -1,0 +1,25 @@
+# engagement data never belongs in the repo
+.zeroprotocol/
+evidence/
+findings/
+*.har
+*.mitm
+*.pcap
+flows*
+scope.yaml
+!templates/scope.yaml
+
+# tool output
+*.json.tmp
+nuclei-output*
+ffuf-*.json
+sqlmap-output/
+js/
+apk/
+apktool-out/
+ipa/
+out/
+
+__pycache__/
+*.pyc
+.DS_Store

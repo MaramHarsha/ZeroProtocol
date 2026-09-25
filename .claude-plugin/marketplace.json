@@ -1,0 +1,23 @@
+{
+  "name": "zeroprotocol",
+  "owner": {
+    "name": "MaramHarsha",
+    "url": "https://github.com/MaramHarsha"
+  },
+  "metadata": {
+    "description": "ZeroProtocol - unified authorized bug-bounty and web-security skills with a mechanically enforced scope gate",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "zeroprotocol",
+      "source": "./",
+      "description": "31 skills for authorized bug bounty: scope gate, recon, 18 vulnerability-class hunters, triage and reporting. Every traffic-sending skill calls zp-scope and obeys its exit code.",
+      "version": "1.0.0",
+      "author": { "name": "MaramHarsha" },
+      "homepage": "https://github.com/MaramHarsha/ZeroProtocol",
+      "license": "MIT",
+      "keywords": ["security", "bug-bounty", "pentest", "recon", "appsec", "authorized-testing"]
+    }
+  ]
+}

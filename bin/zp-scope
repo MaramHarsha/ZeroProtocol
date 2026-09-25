@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""zp-scope - the ZeroProtocol authorization gate.
+
+Every ZeroProtocol skill that sends a single packet at a target MUST clear this
+gate first. It is a real program, not a paragraph of good intentions: the skills
+call `zp-scope check <url>` and branch on the exit code, so an out-of-scope host
+is refused mechanically rather than remembered politely.
+
+Exit codes (the contract the skills rely on):
+    0  ALLOW      host is in scope and the scope file is confirmed
+    1  DENY       host is explicitly out of scope, or matches nothing in scope
+    3  UNCONFIRMED scope file exists but has not been confirmed by a human
+    4  NOSCOPE    no scope file at all
+    2  usage / parse error
+
+Dependency-free: stdlib only, PyYAML used if present but never required.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+
+SCOPE_DIRNAME = ".zeroprotocol"
+SCOPE_FILENAME = "scope.yaml"
+
+ALLOW, DENY, USAGE, UNCONFIRMED, NOSCOPE = 0, 1, 2, 3, 4
+
+LIST_KEYS = (
+    "in_scope",
+    "out_of_scope",
+    "excluded_paths",
+    "excluded_vuln_classes",
+)
+SCALAR_KEYS = (
+    "target",
+    "platform",
+    "program_url",
+    "confirmed",
+    "confirmed_at",
+    "confirmed_by",
+    "authorization",
+    "rate_limit_rps",
+    "max_concurrency",
+    "testing_window",
+    "user_agent",
+    "contact",
+    "notes",
+)
+
+TEMPLATE = """\
+# ZeroProtocol scope contract
+#
+# This file is the authorization boundary. ZeroProtocol will not send traffic at
+# anything that is not matched by in_scope, and will not run ANY active phase
+# until `confirmed` is true. Fill it in, read it back, then run:
+#
+#     zp-scope confirm --by "your name" --authorization "how you are authorized"
+#
+# Wildcard semantics: "*.example.com" matches sub.example.com and deeper, but NOT
+# the apex example.com. List the apex separately if the program includes it. This
+# errs toward refusing - which is the correct direction for a scope gate.
+
+target: {target}
+platform: {platform}          # hackerone|bugcrowd|intigriti|yeswehack|private|self-owned
+program_url: {program_url}
+contact: ""                   # your reporting handle or email, goes in the User-Agent
+
+confirmed: false
+confirmed_at: ""
+confirmed_by: ""
+authorization: ""             # one line: the program page, the contract, or "I own this"
+
+in_scope:
+{in_scope}
+
+out_of_scope:
+  # Subdomains, acquisitions, and third-party SaaS that the program excludes.
+  # Anything listed here is refused even if a wildcard above would match it.
+
+excluded_paths:
+  # Path prefixes never to touch, e.g. /admin/delete, /api/v1/billing/charge
+
+excluded_vuln_classes:
+  - dos
+  - volumetric-testing
+  - social-engineering
+  - physical
+  - spam
+
+rate_limit_rps: 5             # requests per second ceiling, per host
+max_concurrency: 5            # simultaneous connections ceiling
+testing_window: ""            # e.g. "weekdays 09:00-17:00 UTC" if the program says so
+user_agent: "ZeroProtocol (authorized security testing)"
+notes: ""
+"""
+
+
+# --------------------------------------------------------------------------- #
+# Minimal YAML-subset reader/writer.
+#
+# The scope file is deliberately restricted to: comments, `key: scalar`, and
+# `key:` followed by `  - item` lines. That subset is unambiguous, so we parse it
+# ourselves and never depend on PyYAML being installed on a hunter's box.
+# --------------------------------------------------------------------------- #
+
+def _strip_comment(line: str) -> str:
+    out, quote = [], None
+    for i, ch in enumerate(line):
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            out.append(ch)
+            continue
+        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            break
+        out.append(ch)
+    return "".join(out).rstrip()
+
+
+def _unquote(v: str) -> str:
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    return v
+
+
+def parse_scope(text: str) -> dict:
+    data: dict = {}
+    current_list: str | None = None
+    for raw in text.splitlines():
+        line = _strip_comment(raw)
+        if not line.strip():
+            continue
+        if re.match(r"^\s+-\s", line) or line.strip() == "-":
+            if current_list is None:
+                continue
+            item = _unquote(line.strip()[1:].strip())
+            if item:
+                data.setdefault(current_list, []).append(item)
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        if val in ("", "[]", "{}"):
+            if val == "[]" or key in LIST_KEYS:
+                data[key] = []
+                current_list = key
+            else:
+                data[key] = ""
+                current_list = None
+            continue
+        current_list = None
+        v = _unquote(val)
+        if key == "confirmed":
+            data[key] = v.strip().lower() in ("true", "yes", "1", "on")
+        elif key in ("rate_limit_rps", "max_concurrency"):
+            try:
+                data[key] = float(v) if "." in v else int(v)
+            except ValueError:
+                data[key] = v
+        else:
+            data[key] = v
+    for k in LIST_KEYS:
+        data.setdefault(k, [])
+    for k in SCALAR_KEYS:
+        data.setdefault(k, False if k == "confirmed" else "")
+    return data
+
+
+def _q(v) -> str:
+    s = "" if v is None else str(v)
+    if s == "" or re.search(r'[:#"\'\s]', s):
+        return '"' + s.replace('"', '\\"') + '"'
+    return s
+
+
+def dump_scope(d: dict) -> str:
+    lines = ["# ZeroProtocol scope contract", "#",
+             "# Edited by zp-scope. Wildcard *.example.com does NOT match the apex example.com.",
+             ""]
+    for k in ("target", "platform", "program_url", "contact"):
+        lines.append(f"{k}: {_q(d.get(k, ''))}")
+    lines.append("")
+    lines.append(f"confirmed: {'true' if d.get('confirmed') else 'false'}")
+    for k in ("confirmed_at", "confirmed_by", "authorization"):
+        lines.append(f"{k}: {_q(d.get(k, ''))}")
+    for k in LIST_KEYS:
+        lines.append("")
+        lines.append(f"{k}:")
+        for item in d.get(k, []):
+            lines.append(f"  - {_q(item)}")
+    lines.append("")
+    for k in ("rate_limit_rps", "max_concurrency", "testing_window", "user_agent", "notes"):
+        v = d.get(k, "")
+        lines.append(f"{k}: {v if isinstance(v, (int, float)) else _q(v)}")
+    return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Locating the scope file
+# --------------------------------------------------------------------------- #
+
+def find_scope_path(explicit: str | None = None, start: Path | None = None) -> Path | None:
+    if explicit:
+        p = Path(explicit).expanduser()
+        return p if p.is_file() else None
+    env = os.environ.get("ZP_SCOPE")
+    if env:
+        p = Path(env).expanduser()
+        if p.is_file():
+            return p
+    here = (start or Path.cwd()).resolve()
+    for d in [here, *here.parents]:
+        cand = d / SCOPE_DIRNAME / SCOPE_FILENAME
+        if cand.is_file():
+            return cand
+    return None
+
+
+def default_scope_path() -> Path:
+    return Path.cwd() / SCOPE_DIRNAME / SCOPE_FILENAME
+
+
+# --------------------------------------------------------------------------- #
+# Matching
+# --------------------------------------------------------------------------- #
+
+def split_target(s: str) -> tuple[str, str]:
+    """Return (host, path) for a URL, bare host, or host:port."""
+    s = s.strip()
+    if not s:
+        return "", "/"
+    if "://" not in s:
+        # urlsplit needs a scheme to populate .hostname
+        s = "//" + s
+    parts = urlsplit(s if "://" in s else "http:" + s)
+    host = (parts.hostname or "").lower().rstrip(".")
+    path = parts.path or "/"
+    if not host:
+        # e.g. a bare "example.com/foo" that urlsplit put entirely in .path
+        head = s.lstrip("/").split("/", 1)
+        host = head[0].split(":")[0].lower().rstrip(".")
+        path = "/" + head[1] if len(head) > 1 else "/"
+    return host, path
+
+
+def _as_ip(s: str):
+    try:
+        return ipaddress.ip_address(s)
+    except ValueError:
+        return None
+
+
+def _as_net(s: str):
+    try:
+        return ipaddress.ip_network(s, strict=False)
+    except ValueError:
+        return None
+
+
+def host_matches(host: str, pattern: str) -> bool:
+    host = host.lower().rstrip(".")
+    pat = pattern.strip().lower().rstrip(".")
+    if not host or not pat:
+        return False
+
+    # strip a scheme/path if someone pasted a URL into the scope list
+    if "://" in pat or "/" in pat and not _as_net(pat):
+        pat_host, _ = split_target(pat)
+        if pat_host:
+            pat = pat_host
+
+    net = _as_net(pat) if "/" in pat else None
+    if net is not None:
+        ip = _as_ip(host)
+        return ip is not None and ip in net
+
+    if pat == host:
+        return True
+    if pat.startswith("*."):
+        base = pat[2:]
+        return host.endswith("." + base) and host != base
+    if pat.startswith("*"):
+        return host.endswith(pat[1:])
+    if pat.endswith(".*"):
+        return host.startswith(pat[:-2] + ".")
+    return False
+
+
+def evaluate(scope: dict, target: str) -> dict:
+    host, path = split_target(target)
+    verdict = {"target": target, "host": host, "path": path,
+               "allowed": False, "reason": "", "matched": ""}
+
+    if not host:
+        verdict["reason"] = "could not parse a host out of the target"
+        return verdict
+
+    for pat in scope.get("out_of_scope", []):
+        if host_matches(host, pat):
+            verdict["reason"] = f"host is explicitly out of scope (matches {pat!r})"
+            verdict["matched"] = pat
+            return verdict
+
+    for ex in scope.get("excluded_paths", []):
+        ex = ex.strip()
+        if ex and path.startswith(ex):
+            verdict["reason"] = f"path is excluded by the program (prefix {ex!r})"
+            verdict["matched"] = ex
+            return verdict
+
+    for pat in scope.get("in_scope", []):
+        if host_matches(host, pat):
+            verdict["allowed"] = True
+            verdict["reason"] = f"in scope (matches {pat!r})"
+            verdict["matched"] = pat
+            return verdict
+
+    verdict["reason"] = ("host matches nothing in in_scope - ZeroProtocol denies by "
+                         "default; add it to the scope file only if the program says so")
+    return verdict
+
+
+# --------------------------------------------------------------------------- #
+# Commands
+# --------------------------------------------------------------------------- #
+
+def load(args) -> tuple[Path | None, dict]:
+    p = find_scope_path(getattr(args, "file", None))
+    if p is None:
+        return None, {}
+    try:
+        return p, parse_scope(p.read_text(encoding="utf-8"))
+    except OSError as e:
+        print(f"zp-scope: cannot read {p}: {e}", file=sys.stderr)
+        sys.exit(USAGE)
+
+
+def cmd_init(args) -> int:
+    path = Path(args.file).expanduser() if args.file else default_scope_path()
+    if path.exists() and not args.force:
+        print(f"zp-scope: {path} already exists (use --force to overwrite)", file=sys.stderr)
+        return USAGE
+    host, _ = split_target(args.target) if args.target else ("", "")
+    if host:
+        seeds = [f'  - "*.{host}"', f"  - {host}"] if host.count(".") >= 1 else [f"  - {host}"]
+    else:
+        seeds = ['  # - "*.example.com"', "  # - example.com"]
+    body = TEMPLATE.format(
+        target=_q(host or ""),
+        platform=_q(args.platform or ""),
+        program_url=_q(args.program_url or ""),
+        in_scope="\n".join(seeds),
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    print(f"wrote {path}")
+    print("\nNEXT: read it, correct in_scope/out_of_scope against the real program page, then:")
+    print('  zp-scope confirm --by "<you>" --authorization "<program url or contract>"')
+    print("\nUntil then every active ZeroProtocol phase stays locked.")
+    return ALLOW
+
+
+def cmd_show(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        print("zp-scope: no scope file found (run: zp-scope init --target <host>)", file=sys.stderr)
+        return NOSCOPE
+    if args.json:
+        print(json.dumps({"path": str(path), **scope}, indent=2, default=str))
+    else:
+        print(f"# {path}")
+        print(path.read_text(encoding="utf-8"), end="")
+    return ALLOW
+
+
+def cmd_status(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        print("NOSCOPE  no scope file - active testing is locked")
+        return NOSCOPE
+    if not scope.get("confirmed"):
+        print(f"UNCONFIRMED  {path}  - passive recon only, active testing is locked")
+        return UNCONFIRMED
+    n_in = len(scope.get("in_scope", []))
+    n_out = len(scope.get("out_of_scope", []))
+    print(f"CONFIRMED  {path}")
+    print(f"  target        {scope.get('target') or '-'}")
+    print(f"  platform      {scope.get('platform') or '-'}")
+    print(f"  confirmed by  {scope.get('confirmed_by') or '-'} at {scope.get('confirmed_at') or '-'}")
+    print(f"  authorization {scope.get('authorization') or '-'}")
+    print(f"  in scope      {n_in} pattern(s)")
+    print(f"  out of scope  {n_out} pattern(s)")
+    print(f"  rate limit    {scope.get('rate_limit_rps') or '-'} rps, "
+          f"concurrency {scope.get('max_concurrency') or '-'}")
+    excl = scope.get("excluded_vuln_classes", [])
+    if excl:
+        print(f"  never test    {', '.join(excl)}")
+    return ALLOW
+
+
+def cmd_check(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        msg = {"allowed": False, "reason": "no scope file", "code": "NOSCOPE"}
+        print(json.dumps(msg) if args.json else
+              "DENY  no scope file - run: zp-scope init --target <host>")
+        return NOSCOPE
+
+    results = [evaluate(scope, t) for t in args.targets]
+    confirmed = bool(scope.get("confirmed"))
+
+    if args.json:
+        print(json.dumps({"scope": str(path), "confirmed": confirmed,
+                          "results": results}, indent=2))
+    else:
+        for r in results:
+            if r["allowed"] and confirmed:
+                tag = "ALLOW "
+            elif r["allowed"]:
+                # would be in scope, but no human has signed off yet
+                tag = "LOCKED"
+            else:
+                tag = "DENY  "
+            print(f"{tag} {r['host']}{'' if r['path'] in ('', '/') else r['path']}  - {r['reason']}")
+        if not confirmed:
+            print("LOCKED scope file is not confirmed - passive recon only "
+                  "(unlock with: zp-scope confirm)")
+
+    if not confirmed:
+        return UNCONFIRMED
+    return ALLOW if all(r["allowed"] for r in results) else DENY
+
+
+def cmd_add(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        print("zp-scope: no scope file found (run: zp-scope init)", file=sys.stderr)
+        return NOSCOPE
+    key = {"in": "in_scope", "out": "out_of_scope",
+           "path": "excluded_paths", "class": "excluded_vuln_classes"}[args.list]
+    added = []
+    for item in args.items:
+        if item not in scope.get(key, []):
+            scope.setdefault(key, []).append(item)
+            added.append(item)
+    if added and key == "in_scope" and scope.get("confirmed"):
+        # Widening scope invalidates the human sign-off: nobody authorised the new
+        # hosts. Narrowing it (out_scope/paths/classes) is strictly safer, so that
+        # keeps the confirmation.
+        scope["confirmed"] = False
+        scope["confirmed_at"] = ""
+        print("note: in_scope was widened, confirmation cleared - re-run zp-scope confirm")
+    path.write_text(dump_scope(scope), encoding="utf-8")
+    print(f"{key}: added {len(added)} ({', '.join(added) if added else 'nothing new'})")
+    return ALLOW
+
+
+def cmd_confirm(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        print("zp-scope: no scope file found (run: zp-scope init)", file=sys.stderr)
+        return NOSCOPE
+    problems = []
+    if not scope.get("in_scope"):
+        problems.append("in_scope is empty - nothing would be testable")
+    auth = args.authorization or scope.get("authorization") or ""
+    if not auth.strip():
+        problems.append("authorization is empty - state the program URL, the contract, "
+                        "or that you own the target")
+    by = args.by or scope.get("confirmed_by") or ""
+    if not by.strip():
+        problems.append("confirmed_by is empty - pass --by \"<your name or handle>\"")
+    for pat in scope.get("in_scope", []):
+        if pat.strip() in ("*", "*.*", "0.0.0.0/0", "::/0"):
+            problems.append(f"in_scope contains {pat!r}, which is not a scope, it is the internet")
+    if problems:
+        print("zp-scope: cannot confirm:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return USAGE
+    scope["confirmed"] = True
+    scope["confirmed_by"] = by
+    scope["authorization"] = auth
+    scope["confirmed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    path.write_text(dump_scope(scope), encoding="utf-8")
+    print(f"CONFIRMED  {path}")
+    print(f"  {len(scope['in_scope'])} in-scope pattern(s), "
+          f"{len(scope.get('out_of_scope', []))} exclusion(s)")
+    print("Active phases are now unlocked for in-scope hosts only.")
+    return ALLOW
+
+
+def cmd_revoke(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        return NOSCOPE
+    scope["confirmed"] = False
+    scope["confirmed_at"] = ""
+    path.write_text(dump_scope(scope), encoding="utf-8")
+    print(f"revoked confirmation on {path} - active testing is locked")
+    return ALLOW
+
+
+def cmd_filter(args) -> int:
+    """Read hosts on stdin, print only the in-scope ones. The safe funnel for
+    piping a recon wordlist into anything that sends traffic."""
+    path, scope = load(args)
+    if path is None or not scope.get("confirmed"):
+        print("zp-scope: refusing to filter - scope missing or unconfirmed", file=sys.stderr)
+        return NOSCOPE if path is None else UNCONFIRMED
+    kept = dropped = 0
+    for line in sys.stdin:
+        t = line.strip()
+        if not t:
+            continue
+        if evaluate(scope, t)["allowed"]:
+            print(t)
+            kept += 1
+        else:
+            dropped += 1
+    print(f"zp-scope: kept {kept}, dropped {dropped} out-of-scope", file=sys.stderr)
+    return ALLOW
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="zp-scope",
+        description="ZeroProtocol authorization gate. Exit: 0 allow, 1 deny, "
+                    "3 unconfirmed, 4 no scope file.")
+    ap.add_argument("-f", "--file", help="path to scope.yaml (default: search up from cwd)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("init", help="write a scope.yaml template")
+    p.add_argument("--target", help="primary host or URL")
+    p.add_argument("--platform", default="", help="hackerone|bugcrowd|intigriti|yeswehack|private|self-owned")
+    p.add_argument("--program-url", default="", dest="program_url")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("show", help="print the scope file")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("status", help="is active testing unlocked?")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("check", help="is this target allowed?")
+    p.add_argument("targets", nargs="+")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("add", help="add patterns to a scope list")
+    p.add_argument("list", choices=["in", "out", "path", "class"])
+    p.add_argument("items", nargs="+")
+    p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("confirm", help="record human authorization and unlock active phases")
+    p.add_argument("--by", default="")
+    p.add_argument("--authorization", default="")
+    p.set_defaults(func=cmd_confirm)
+
+    p = sub.add_parser("revoke", help="re-lock active phases")
+    p.set_defaults(func=cmd_revoke)
+
+    p = sub.add_parser("filter", help="stdin hosts -> stdout in-scope hosts only")
+    p.set_defaults(func=cmd_filter)
+
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(ALLOW)
+    except KeyboardInterrupt:
+        sys.exit(130)

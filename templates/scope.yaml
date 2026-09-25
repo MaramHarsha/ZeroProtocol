@@ -1,0 +1,45 @@
+# ZeroProtocol scope contract
+#
+# This file is the authorization boundary. ZeroProtocol will not send traffic at
+# anything that is not matched by in_scope, and will not run ANY active phase
+# until `confirmed` is true. Fill it in, read it back, then run:
+#
+#     zp-scope confirm --by "your name" --authorization "how you are authorized"
+#
+# Wildcard semantics: "*.example.com" matches sub.example.com and deeper, but NOT
+# the apex example.com. List the apex separately if the program includes it. This
+# errs toward refusing - which is the correct direction for a scope gate.
+
+target: example.com
+platform: hackerone          # hackerone|bugcrowd|intigriti|yeswehack|private|self-owned
+program_url: ""
+contact: ""                   # your reporting handle or email, goes in the User-Agent
+
+confirmed: false
+confirmed_at: ""
+confirmed_by: ""
+authorization: ""             # one line: the program page, the contract, or "I own this"
+
+in_scope:
+  - "*.example.com"
+  - example.com
+
+out_of_scope:
+  # Subdomains, acquisitions, and third-party SaaS that the program excludes.
+  # Anything listed here is refused even if a wildcard above would match it.
+
+excluded_paths:
+  # Path prefixes never to touch, e.g. /admin/delete, /api/v1/billing/charge
+
+excluded_vuln_classes:
+  - dos
+  - volumetric-testing
+  - social-engineering
+  - physical
+  - spam
+
+rate_limit_rps: 5             # requests per second ceiling, per host
+max_concurrency: 5            # simultaneous connections ceiling
+testing_window: ""            # e.g. "weekdays 09:00-17:00 UTC" if the program says so
+user_agent: "ZeroProtocol (authorized security testing)"
+notes: ""

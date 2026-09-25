@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# zp-init - scaffold a ZeroProtocol engagement workspace in the current directory.
+#
+#   zp-init                     create .zeroprotocol/ with an empty scope
+#   zp-init target.com          create it and seed the scope file for that target
+#   zp-init target.com h1 URL   ...also record the platform and program URL
+#
+# Files, not memory: a long session drifts, a file does not.
+
+set -euo pipefail
+
+TARGET="${1:-}"
+PLATFORM="${2:-}"
+PROGRAM_URL="${3:-}"
+W=".zeroprotocol"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -d "$W" ]; then
+  echo "zp-init: $W already exists - not touching it."
+  echo "         scope:  $( [ -f "$W/scope.yaml" ] && echo present || echo MISSING )"
+  [ -f "$W/scope.yaml" ] && "$HERE/zp-scope" status || true
+  exit 0
+fi
+
+mkdir -p "$W"/{surface,coverage,evidence,findings}
+
+cat > "$W/notes.md" <<'EOF'
+# Engagement notes
+
+<!-- Line 1 must be the MODE. It decides what counts as a finding. -->
+mode: <bug-bounty | pentest | own-asset>
+objective: <today I target ___ to reach ___>
+classes: <the one or two vuln classes this session will actually hunt>
+budget: <recon % / hunt % / prove+report %>
+
+## Session log
+<!-- append as you go: what you tried, what it returned, what you concluded -->
+
+## Next command
+<!-- the exact command to run on resume, so a new session does not rediscover context -->
+EOF
+
+cat > "$W/queue.md" <<'EOF'
+# Ranked surface
+
+score = class weight + 5 (parameter) + 55 (came from a leaked secret)
+rce 100 | ato 95 | tenant-break 90 | sqli 85 | ssrf 80 | idor 75 | authz 70
+upload 65 | deser 60 | xss 55 | smuggling 50 | cache 45 | graphql 40 | cors 35 | info-leak 30
+
+## P1
+## P2
+## blocked
+## chain-pending
+## killed
+EOF
+
+cat > "$W/submissions.md" <<'EOF'
+# Submissions
+
+| date | finding | platform | report id | state | bounty |
+|---|---|---|---|---|---|
+
+<!-- record N/A and duplicate outcomes too: class priors are the part that compounds -->
+EOF
+
+: > "$W/surface/hosts.txt"
+: > "$W/surface/urls.txt"
+: > "$W/surface/endpoints.txt"
+
+printf 'evidence/\n*.pcap\n*.har\n' > "$W/.gitignore"
+
+if [ -n "$TARGET" ]; then
+  "$HERE/zp-scope" init --target "$TARGET" \
+    ${PLATFORM:+--platform "$PLATFORM"} \
+    ${PROGRAM_URL:+--program-url "$PROGRAM_URL"} >/dev/null
+  echo "zp-init: workspace + scope created for $TARGET"
+else
+  "$HERE/zp-scope" init >/dev/null
+  echo "zp-init: workspace created (scope template is empty)"
+fi
+
+cat <<EOF
+
+  $W/
+    scope.yaml      the gate - edit it, then confirm it
+    notes.md        SET THE MODE ON LINE 1 before anything else
+    queue.md        ranked surface
+    surface/        hosts, urls, endpoints, tech
+    coverage/       per host+class: attempts, variants, blockers
+    evidence/       redacted at capture, gitignored
+    findings/       one report-shaped file per finding
+
+  Next:
+    1. edit $W/notes.md          - mode, objective, one or two classes
+    2. edit $W/scope.yaml        - against the real program page
+    3. zp-scope confirm --by "<you>" --authorization "<program url or contract>"
+
+  Active testing stays locked until step 3.
+EOF

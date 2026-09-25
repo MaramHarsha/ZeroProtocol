@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""zp-doctor - what can ZeroProtocol actually do on this machine right now?
+
+ZeroProtocol is designed to degrade, never to fail. Every external tool it likes
+has a documented stdlib/curl fallback, so a bare box still hunts - just slower and
+with less coverage. This program reports exactly where you stand, so the skills can
+plan around what is missing instead of hallucinating a tool that is not installed.
+
+    zp-doctor                 human-readable report
+    zp-doctor --json          machine-readable, for skills to branch on
+    zp-doctor --phase recon   only the tools one phase cares about
+    zp-doctor --missing       just the names of what is absent
+    zp-doctor --install-script > setup.sh   emit (never run) install commands
+
+Exit 0 if every CORE tool is present, 1 if a core tool is missing.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+
+# name, phase, tier, purpose, install, fallback
+#   tier: core   = ZeroProtocol assumes it; almost always already present
+#         strong = materially better coverage; the fallback is a real downgrade
+#         extra  = nice to have; a whole optional capability
+TOOLS = [
+    # ---- core: the package refuses to pretend these are optional ----------- #
+    ("python3", "core", "core", "runs every zp-* helper and all fallbacks",
+     "apt install python3 | brew install python3", None),
+    ("curl", "core", "core", "every HTTP probe, and the fallback for most scanners",
+     "apt install curl | brew install curl", None),
+    ("dig", "core", "core", "DNS resolution, CNAME chains, takeover detection",
+     "apt install dnsutils | brew install bind", "python3 socket.getaddrinfo (no CNAME visibility)"),
+    ("git", "core", "core", "cloning targets for source review, updating ZeroProtocol",
+     "apt install git | brew install git", None),
+    ("openssl", "core", "core", "TLS inspection, SAN harvesting, cipher checks",
+     "apt install openssl | brew install openssl", "python3 ssl module"),
+    ("jq", "core", "strong", "parsing every JSON API response in the pipeline",
+     "apt install jq | brew install jq", "python3 -c 'import json,sys;...'"),
+
+    # ---- passive recon ----------------------------------------------------- #
+    ("subfinder", "recon-passive", "strong", "passive subdomain enumeration across ~30 sources",
+     "go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
+     "curl crt.sh?q=%25.DOMAIN + Anubis + HackerTarget (fewer sources, still useful)"),
+    ("amass", "recon-passive", "extra", "deep passive+active graph enumeration, ASN pivots",
+     "go install github.com/owasp-amass/amass/v4/...@master", "subfinder, or crt.sh fallback"),
+    ("assetfinder", "recon-passive", "extra", "quick second-opinion subdomain source",
+     "go install github.com/tomnomnom/assetfinder@latest", "crt.sh fallback"),
+    ("gau", "recon-passive", "strong", "historical URLs from Wayback/CommonCrawl/URLScan",
+     "go install github.com/lc/gau/v2/cmd/gau@latest",
+     "curl 'web.archive.org/cdx/search/cdx?url=*.DOMAIN&output=text&fl=original&collapse=urlkey'"),
+    ("waybackurls", "recon-passive", "extra", "Wayback-only URL history",
+     "go install github.com/tomnomnom/waybackurls@latest", "the same CDX curl call as gau"),
+    ("github-subdomains", "recon-passive", "extra", "subdomains mined from GitHub code search",
+     "go install github.com/gwen001/github-subdomains@latest",
+     "gh api search/code (needs a token, heavily rate-limited)"),
+    ("trufflehog", "recon-passive", "strong", "verified secret detection in repos, images, S3",
+     "curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin",
+     "gitleaks, or zp's own regex sweep (unverified, noisier)"),
+    ("gitleaks", "recon-passive", "extra", "git-history secret scanning",
+     "apt install gitleaks | brew install gitleaks", "trufflehog, or regex sweep"),
+
+    # ---- active recon ------------------------------------------------------ #
+    ("httpx", "recon-active", "strong", "mass HTTP probing: status, title, tech, TLS, CDN",
+     "go install github.com/projectdiscovery/httpx/cmd/httpx@latest",
+     "curl -sk -o /dev/null -w '%{http_code} %{url_effective}' in a bounded loop"),
+    ("dnsx", "recon-active", "strong", "fast bulk DNS resolution and wildcard detection",
+     "go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest", "dig +short in a loop"),
+    ("naabu", "recon-active", "extra", "SYN/CONNECT port discovery, feeds httpx",
+     "go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest",
+     "nmap, or python3 socket connect_ex sweep of the top ~100 ports"),
+    ("nmap", "recon-active", "strong", "service/version detection on the ports that matter",
+     "apt install nmap | brew install nmap", "python3 socket sweep (no version detection)"),
+    ("tlsx", "recon-active", "extra", "TLS/SAN harvesting at scale for scope expansion",
+     "go install github.com/projectdiscovery/tlsx/cmd/tlsx@latest",
+     "openssl s_client -connect HOST:443 | openssl x509 -noout -text"),
+    ("nuclei", "recon-active", "strong", "templated detection of known CVEs and misconfigurations",
+     "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+     "no real substitute - hand-checking a shortlist of known issues"),
+    ("wafw00f", "recon-active", "extra", "WAF fingerprinting, tells you which bypasses to try",
+     "pipx install wafw00f", "response-header and block-page heuristics by hand"),
+    ("whatweb", "recon-active", "extra", "technology fingerprinting",
+     "apt install whatweb", "httpx -tech-detect, or header/body signature checks"),
+
+    # ---- content discovery ------------------------------------------------- #
+    ("ffuf", "content-discovery", "strong", "directory, vhost, and parameter fuzzing",
+     "go install github.com/ffuf/ffuf/v2@latest",
+     "feroxbuster/gobuster, or a rate-limited curl loop (calibrate soft-404 first)"),
+    ("feroxbuster", "content-discovery", "extra", "recursive content discovery with auto-filtering",
+     "apt install feroxbuster | brew install feroxbuster", "ffuf"),
+    ("gobuster", "content-discovery", "extra", "directory/dns/vhost bruteforce",
+     "apt install gobuster | brew install gobuster", "ffuf"),
+    ("katana", "content-discovery", "strong", "headless crawling that finds JS-built routes",
+     "go install github.com/projectdiscovery/katana/cmd/katana@latest",
+     "hakrawler, or curl + a regex link extractor (misses JS-rendered routes)"),
+    ("hakrawler", "content-discovery", "extra", "fast non-headless crawl",
+     "go install github.com/hakluke/hakrawler@latest", "katana, or curl + regex"),
+    ("arjun", "content-discovery", "extra", "hidden HTTP parameter discovery",
+     "pipx install arjun", "x8, or ffuf against a param wordlist with a reflection oracle"),
+    ("x8", "content-discovery", "extra", "hidden parameter discovery with a diff oracle",
+     "cargo install x8", "arjun, or ffuf with reflection detection"),
+    ("anew", "content-discovery", "extra", "append-only dedup, the glue of every recon pipeline",
+     "go install github.com/tomnomnom/anew@latest", "sort -u, or awk '!seen[$0]++'"),
+    ("qsreplace", "content-discovery", "extra", "swap query-string values for payloads en masse",
+     "go install github.com/tomnomnom/qsreplace@latest", "python3 urllib.parse one-liner"),
+    ("unfurl", "content-discovery", "extra", "explode URLs into domains/paths/params",
+     "go install github.com/tomnomnom/unfurl@latest", "python3 urllib.parse one-liner"),
+
+    # ---- exploitation ------------------------------------------------------ #
+    ("sqlmap", "exploit", "strong", "SQLi confirmation and safe, bounded proof",
+     "pipx install sqlmap | apt install sqlmap",
+     "hand-built boolean/time oracles - slower but far more precise about impact"),
+    ("dalfox", "exploit", "strong", "XSS parameter analysis and verified reflection",
+     "go install github.com/hahwul/dalfox/v2@latest",
+     "curl with a unique numeric canary + encoding analysis of the reflection"),
+    ("commix", "exploit", "extra", "command-injection detection",
+     "pipx install commix", "time-based oracle by hand (sleep/ping payloads)"),
+    ("jwt_tool", "exploit", "extra", "JWT algorithm confusion, kid abuse, weak-secret cracking",
+     "pipx install jwt-tool",
+     "python3 hmac/base64url by hand - fine for alg:none and HS256 confusion"),
+    ("interactsh-client", "exploit", "strong", "out-of-band callbacks: blind SSRF, XXE, RCE, log4shell",
+     "go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest",
+     "your own DNS/HTTP collector, or a canary domain you control - never a third-party pastebin"),
+    ("smuggler.py", "exploit", "extra", "HTTP request-smuggling desync detection",
+     "git clone https://github.com/defparam/smuggler",
+     "hand-crafted CL.TE/TE.CL probes over a raw socket with timing analysis"),
+    ("ysoserial", "exploit", "extra", "Java deserialization gadget chains",
+     "download the release jar from frohoff/ysoserial", "none - skip the class without it"),
+
+    # ---- takeover / cloud -------------------------------------------------- #
+    ("subzy", "takeover", "strong", "subdomain-takeover fingerprint matching",
+     "go install github.com/PentestPad/subzy@latest",
+     "dig CNAME + curl the dangling host and match the provider's claim page by hand"),
+    ("s3scanner", "cloud", "extra", "open/misconfigured object-storage bucket discovery",
+     "pipx install s3scanner", "curl the bucket URL and read the XML ACL response"),
+    ("aws", "cloud", "extra", "authenticated AWS checks once you hold a credential",
+     "pipx install awscli", "signed requests by hand (painful) - prefer the CLI"),
+
+    # ---- mobile ------------------------------------------------------------ #
+    ("jadx", "mobile", "strong", "APK decompilation to readable Java",
+     "apt install jadx | brew install jadx", "apktool for smali only - much harder to read"),
+    ("apktool", "mobile", "extra", "APK unpacking, manifest and resource recovery",
+     "apt install apktool | brew install apktool", "unzip + aapt2 dump for the manifest"),
+    ("frida", "mobile", "extra", "runtime instrumentation, pinning bypass",
+     "pipx install frida-tools", "objection, or static-only review"),
+
+    # ---- web3 -------------------------------------------------------------- #
+    ("forge", "web3", "strong", "fork-based smart-contract PoC (foundry)",
+     "curl -L https://foundry.paradigm.xyz | bash && foundryup",
+     "hardhat, or read-only static review with no executable PoC"),
+    ("slither", "web3", "extra", "Solidity static analysis",
+     "pipx install slither-analyzer", "manual review against the standard class list"),
+
+    # ---- proxy / traffic --------------------------------------------------- #
+    ("mitmproxy", "proxy", "extra", "capture and replay a real traffic corpus",
+     "pipx install mitmproxy", "Caido or Burp, or curl with saved request files"),
+    ("caido", "proxy", "extra", "intercepting proxy with an agent-friendly workflow",
+     "download from caido.io", "mitmproxy or Burp"),
+
+    # ---- language runtimes that unlock whole install families -------------- #
+    ("go", "meta", "strong", "installs the ProjectDiscovery/tomnomnom tool families",
+     "apt install golang-go | brew install go", "use distro packages or prebuilt releases"),
+    ("pipx", "meta", "strong", "installs the python security tooling without polluting the system",
+     "apt install pipx | brew install pipx", "pip install --user"),
+]
+
+PHASE_ORDER = ["core", "meta", "recon-passive", "recon-active", "content-discovery",
+               "exploit", "takeover", "cloud", "mobile", "web3", "proxy"]
+
+# Capability gates: a capability is DEGRADED if none of its tools are present.
+CAPABILITIES = {
+    "passive subdomain enumeration": ["subfinder", "amass", "assetfinder"],
+    "historical URL mining": ["gau", "waybackurls"],
+    "mass HTTP probing": ["httpx"],
+    "templated CVE/misconfig detection": ["nuclei"],
+    "content discovery": ["ffuf", "feroxbuster", "gobuster"],
+    "JS-aware crawling": ["katana", "hakrawler"],
+    "hidden parameter discovery": ["arjun", "x8"],
+    "out-of-band callbacks (blind SSRF/XXE/RCE)": ["interactsh-client"],
+    "subdomain takeover checks": ["subzy"],
+    "verified secret scanning": ["trufflehog", "gitleaks"],
+    "mobile static review": ["jadx", "apktool"],
+    "smart-contract PoC": ["forge"],
+    "traffic corpus replay": ["mitmproxy", "caido"],
+}
+
+
+def which(name: str) -> str | None:
+    p = shutil.which(name)
+    if p:
+        return p
+    # a couple of tools are conventionally installed as a script or jar
+    for alt in (name.removesuffix(".py"), name + ".py"):
+        if alt != name and shutil.which(alt):
+            return shutil.which(alt)
+    gobin = os.path.expanduser(os.environ.get("GOBIN") or "~/go/bin")
+    cand = os.path.join(gobin, name)
+    return cand if os.path.isfile(cand) and os.access(cand, os.X_OK) else None
+
+
+def survey(phase: str | None = None) -> list[dict]:
+    rows = []
+    for name, ph, tier, purpose, install, fallback in TOOLS:
+        if phase and ph != phase:
+            continue
+        path = which(name)
+        rows.append({"tool": name, "phase": ph, "tier": tier, "present": bool(path),
+                     "path": path, "purpose": purpose, "install": install,
+                     "fallback": fallback})
+    return rows
+
+
+def capability_report(rows: list[dict]) -> dict:
+    have = {r["tool"] for r in rows if r["present"]}
+    out = {}
+    for cap, tools in CAPABILITIES.items():
+        got = [t for t in tools if t in have]
+        out[cap] = {"available": bool(got), "via": got,
+                    "degraded_to": None if got else
+                    next((r["fallback"] for r in TOOLS_BY_NAME(tools) if r), None)}
+    return out
+
+
+def TOOLS_BY_NAME(names):
+    idx = {t[0]: {"fallback": t[5]} for t in TOOLS}
+    return [idx.get(n) for n in names]
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="zp-doctor", description=__doc__.split("\n")[0])
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--phase", choices=PHASE_ORDER)
+    ap.add_argument("--missing", action="store_true", help="print only missing tool names")
+    ap.add_argument("--install-script", action="store_true",
+                    help="emit install commands for what is missing (does not run them)")
+    args = ap.parse_args(argv)
+
+    rows = survey(args.phase)
+    missing = [r for r in rows if not r["present"]]
+    core_missing = [r for r in missing if r["tier"] == "core"]
+
+    if args.missing:
+        for r in missing:
+            print(r["tool"])
+        return 1 if core_missing else 0
+
+    if args.install_script:
+        print("#!/usr/bin/env bash")
+        print("# Emitted by zp-doctor. READ THIS BEFORE RUNNING IT.")
+        print("# Pick the lines you want; the `|` separates per-platform alternatives.")
+        print("set -u")
+        for r in missing:
+            print(f"\n# {r['tool']}  [{r['tier']}]  {r['purpose']}")
+            print(f"#   fallback if you skip it: {r['fallback'] or 'none - this one is required'}")
+            print(f"# {r['install']}")
+        return 0
+
+    if args.json:
+        print(json.dumps({
+            "tools": rows,
+            "summary": {"total": len(rows), "present": len(rows) - len(missing),
+                        "missing": len(missing), "core_missing": [r["tool"] for r in core_missing]},
+            "capabilities": capability_report(rows),
+        }, indent=2))
+        return 1 if core_missing else 0
+
+    # human report
+    print("ZeroProtocol toolchain\n")
+    for ph in PHASE_ORDER:
+        group = [r for r in rows if r["phase"] == ph]
+        if not group:
+            continue
+        have = sum(1 for r in group if r["present"])
+        print(f"  {ph}  ({have}/{len(group)})")
+        for r in group:
+            mark = "ok " if r["present"] else ("MISSING" if r["tier"] == "core" else "-  ")
+            print(f"    {mark:8s} {r['tool']:20s} {r['purpose']}")
+            if not r["present"] and r["tier"] in ("core", "strong"):
+                print(f"{'':13s}install:  {r['install']}")
+                print(f"{'':13s}without:  {r['fallback'] or 'nothing - this one is required'}")
+        print()
+
+    caps = capability_report(rows)
+    print("  capabilities")
+    for cap, v in caps.items():
+        if v["available"]:
+            print(f"    ok       {cap}  (via {', '.join(v['via'])})")
+        else:
+            print(f"    degraded {cap}")
+            if v["degraded_to"]:
+                print(f"{'':13s}falls back to: {v['degraded_to']}")
+    print()
+
+    if core_missing:
+        print(f"  {len(core_missing)} CORE tool(s) missing: "
+              f"{', '.join(r['tool'] for r in core_missing)}")
+        print("  ZeroProtocol needs these. Install them before hunting.")
+        return 1
+
+    degraded = [c for c, v in caps.items() if not v["available"]]
+    if degraded:
+        print(f"  Usable. {len(degraded)} capabilit(y/ies) running on fallbacks - "
+              f"slower and narrower, but correct.")
+        print("  zp-doctor --install-script > setup.sh   to see how to close the gaps.")
+    else:
+        print("  Fully equipped.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

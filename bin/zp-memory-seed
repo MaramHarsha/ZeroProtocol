@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""zp-memory-seed - copy the ZeroProtocol operating notes into a Claude memory directory.
+
+Claude Code keeps per-project memory at ~/.claude/projects/<slug>/memory/, where <slug>
+is the project's absolute path with every non-alphanumeric character replaced by a dash.
+This program resolves that path for a directory and seeds the notes from the repo's
+memory/ folder, merging the index lines into MEMORY.md without duplicating them.
+
+    zp-memory-seed                    seed for the current directory
+    zp-memory-seed /path/to/project   seed for that project
+    zp-memory-seed --where            just print the resolved memory directory
+    zp-memory-seed --remove           remove the zp-* notes and their index lines
+
+install.sh calls this for you. Run it by hand when you start hunting from a new
+directory and want the discipline to persist there too.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SRC = REPO / "memory"
+
+
+def claude_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+
+
+def project_slug(path: Path) -> str:
+    return re.sub(r"[^a-zA-Z0-9]", "-", str(path))
+
+
+def memory_dir(project: Path) -> Path:
+    return claude_dir() / "projects" / project_slug(project) / "memory"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="zp-memory-seed", description=__doc__.split("\n")[0])
+    ap.add_argument("project", nargs="?", default=".", help="project directory (default: cwd)")
+    ap.add_argument("--where", action="store_true", help="print the memory directory and exit")
+    ap.add_argument("--remove", action="store_true", help="remove the seeded notes")
+    args = ap.parse_args()
+
+    project = Path(args.project).expanduser().resolve()
+    mem = memory_dir(project)
+
+    if args.where:
+        print(mem)
+        return 0
+
+    if args.remove:
+        if not mem.is_dir():
+            print(f"nothing to remove: {mem} does not exist")
+            return 0
+        n = 0
+        for f in sorted(mem.glob("zp-*.md")):
+            f.unlink()
+            n += 1
+        index = mem / "MEMORY.md"
+        if index.is_file():
+            kept = [l for l in index.read_text(encoding="utf-8").splitlines()
+                    if "(zp-" not in l]
+            index.write_text("\n".join(kept).rstrip() + "\n" if any(kept) else "",
+                             encoding="utf-8")
+        print(f"removed {n} note(s) from {mem}")
+        return 0
+
+    if not SRC.is_dir():
+        print(f"zp-memory-seed: no memory/ directory at {SRC}", file=sys.stderr)
+        return 1
+
+    notes = sorted(SRC.glob("zp-*.md"))
+    if not notes:
+        print(f"zp-memory-seed: no zp-*.md notes in {SRC}", file=sys.stderr)
+        return 1
+
+    mem.mkdir(parents=True, exist_ok=True)
+    for f in notes:
+        shutil.copyfile(f, mem / f.name)
+    print(f"seeded {len(notes)} note(s) -> {mem}")
+
+    lines_file = SRC / "MEMORY.lines"
+    if lines_file.is_file():
+        index = mem / "MEMORY.md"
+        existing = index.read_text(encoding="utf-8") if index.is_file() else ""
+        added = 0
+        with index.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            for line in lines_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and line not in existing:
+                    fh.write(line + "\n")
+                    added += 1
+        print(f"added {added} index line(s) to {index}")
+
+    print("\nThese load automatically the next time Claude Code runs in that directory.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
