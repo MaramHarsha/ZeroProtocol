@@ -372,3 +372,7 @@ Known-CVE skills are checks against a *specific* published vulnerability, and th
 exposure and stop. They never carry a post-exploitation path, however available the access
 looks - see `zp-cve-2026-41940` for the reasoning, which applies to every skill of this
 shape added later.
+
+The per-class skill shape used throughout this pack (context-to-payload mapping, the unique
+numeric canary, confirm-or-kill, high-value targets) descends from `elementalsouls/Claude-BugHunter`
+(CC BY 4.0). Full attribution for every source is in `NOTICE.md`.

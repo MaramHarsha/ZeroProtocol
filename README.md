@@ -122,19 +122,18 @@ to be accepted.
 
 ## Acknowledgements
 
-Distilled from 54 public bug-bounty and offensive-security skill repositories (≈18,000 `SKILL.md`
-files) — among them [uphiago/recon-skills](https://github.com/uphiago/recon-skills),
-[elementalsouls/claude-bughunter](https://github.com/elementalsouls/claude-bughunter),
-[sw33tLie/bbscope](https://github.com/sw33tLie/bbscope),
-[caido/skills](https://github.com/caido/skills),
-[PatrikFehrenbach/h1-brain](https://github.com/PatrikFehrenbach/h1-brain),
-[trailofbits/skills](https://github.com/trailofbits/skills),
-[yaklang/hack-skills](https://github.com/yaklang/hack-skills) and
-[snailsploit/claude-red](https://github.com/snailsploit/claude-red) and
-[usestrix/strix](https://github.com/usestrix/strix) (Apache-2.0, the reference for the AI,
-business-logic and prototype-pollution classes). ZeroProtocol is a rewrite,
-not a repackage: the phase gates, the mechanical scope enforcement, the per-class stop points and
-the degradation contract are its own.
+ZeroProtocol is a rewrite, not a repackage — but it was written by studying a lot of excellent
+public work, and some of it requires attribution. **[NOTICE.md](NOTICE.md) records every source,
+its licence, and exactly what was used.**
+
+The load-bearing ones: **[elementalsouls/Claude-BugHunter](https://github.com/elementalsouls/Claude-BugHunter)**
+(MIT / CC BY 4.0) — the per-class skill shape here descends from its `hunt-*` skills;
+**[usestrix/strix](https://github.com/usestrix/strix)** (Apache-2.0) — the AI, business-logic and
+semantic-confusion classes; **[vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser)**
+(Apache-2.0) — the browser layer; **[sw33tLie/bbscope](https://github.com/sw33tLie/bbscope)**,
+**[caido/skills](https://github.com/caido/skills)**,
+**[PatrikFehrenbach/h1-brain](https://github.com/PatrikFehrenbach/h1-brain)** and
+**[uphiago/recon-skills](https://github.com/uphiago/recon-skills)**.
 
 ## License
 

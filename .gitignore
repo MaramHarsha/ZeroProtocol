@@ -33,3 +33,7 @@ reports/kev/*
 !reports/kev/known_exploited_vulnerabilities.json
 # HackerOne report bodies are their authors' copyrighted work - cached locally, never shipped
 reports/hackerone/
+
+# intel/ — the H1 index is UPSTREAM-UNLICENSED, so it is fetched, never redistributed.
+# `zp-intel update` pulls it on first use.
+intel/hackerone-reports.csv
