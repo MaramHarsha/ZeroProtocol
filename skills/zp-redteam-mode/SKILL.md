@@ -130,8 +130,8 @@ than another privilege-escalation path.
 
 ## Hand off to
 
-Gate cleared -> the zp-redteam-* tier (Active Directory, Entra, Okta, VPN appliances, vCenter,
-cloud IAM, supply chain).
+Gate cleared -> the tier: `zp-redteam-ad`, `zp-redteam-entra`, `zp-redteam-okta`,
+`zp-redteam-vpn`, `zp-redteam-vcenter`, `zp-redteam-iam`, `zp-redteam-supplychain`.
 External surface first -> the normal recon chain (`zp-recon-passive`, `zp-recon-active`), which
 applies unchanged. Findings -> `zp-triage`, `zp-report`.
 

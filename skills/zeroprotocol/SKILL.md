@@ -173,6 +173,7 @@ Then dispatch in this order:
 |---|---|
 | reflected input, any sink | `zp-xss` |
 | any parameter reaching a datastore | `zp-sqli` |
+| a directory, XPath, Lucene or other non-SQL query language behind a parameter | `zp-ldap-xpath` |
 | template syntax reflected, shell-ish params, `eval`-ish behaviour | `zp-rce-ssti` |
 | XML/SVG/DOCX accepted, or a file path in a parameter | `zp-xxe-lfi` |
 | any upload endpoint | `zp-upload` |
@@ -186,6 +187,8 @@ Then dispatch in this order:
 | `/graphql`, `__schema`, Apollo | `zp-graphql` |
 | gRPC, protobuf, server reflection, or a gRPC-Web/JSON transcoding gateway | `zp-grpc` |
 | any `Access-Control-Allow-*` header | `zp-cors` |
+| a state-changing request whose only protection is a token or a cookie | `zp-csrf` |
+| login, logout, cookie attributes, timeout or concurrent-session behaviour | `zp-session` |
 | dangling CNAME, vendor 404, unclaimed bucket | `zp-takeover` |
 | a URL-valued parameter that redirects (next, returnTo, callback, dest) | `zp-open-redirect` |
 | two components read the same value - parser, normalizer, validator vs sink | `zp-semantic-confusion` |
@@ -195,6 +198,7 @@ Then dispatch in this order:
 | an APK/IPA in scope | `zp-mobile` |
 | a contract address or chain asset in scope | `zp-web3` |
 | source in hand | `zp-code-audit` |
+| exposed CI config, build logs, GitHub Actions workflows, or a package registry namespace | `zp-cicd` |
 | chatbot, AI assistant, AI search, summarise/translate feature, RAG pipeline | `zp-llm` |
 | the AI can call tools, install plugins/MCP servers, keep memory, or delegate | `zp-agentic` |
 | checkout, payments, refunds, subscriptions, quotas, invites, approvals | `zp-business-logic` |
@@ -359,16 +363,18 @@ seed notes; `zp-memory-seed` copies them in.
 
 **Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`
-**Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
-**Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`
+**Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`, `zp-ldap-xpath`
+**Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`, `zp-session`, `zp-csrf`
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`, `zp-grpc`
-**Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
+**Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`, `zp-cicd`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
-**Red team** - `zp-redteam-mode` (a separate, higher authorization bar; a bounty program page
-does not unlock it - `zp-scope tier redteam` enforces this in code)
+**Red team** - `zp-redteam-mode` (the gate: a separate, higher authorization bar; a bounty
+program page does not unlock it - `zp-scope tier redteam` enforces this in code), then
+`zp-redteam-ad`, `zp-redteam-entra`, `zp-redteam-okta`, `zp-redteam-vpn`, `zp-redteam-vcenter`,
+`zp-redteam-iam`, `zp-redteam-supplychain`
 **Output** - `zp-triage`, `zp-report`
 **Agents** - `zp-recon-sweep`, `zp-surface-probe`, `zp-class-hunter`, `zp-verifier`, `zp-report-drafter` (see Agents above)
 

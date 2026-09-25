@@ -139,7 +139,7 @@ Specific published-CVE skills where ZeroProtocol has one: `zp-cve-2026-41940` (c
 pre-auth bypass), `zp-cve-lightrag` (three LightRAG advisories).
 Confirmation of the underlying class -> `zp-rce-ssti`, `zp-sqli`, `zp-ssrf`, `zp-xxe-lfi`,
 `zp-jwt-oauth`. Dependency reachability -> `zp-code-audit`.
-Self-hosted infrastructure -> `zp-cloud`. Confirmed -> `zp-triage`, `zp-report`.
+Self-hosted infrastructure -> `zp-cloud`, `zp-cicd`. Confirmed -> `zp-triage`, `zp-report`.
 
 Corpus: `reports/` — CISA KEV (public domain), nuclei-templates (MIT), Exploit-DB (GPL-2.0),
 PoC-in-GitHub (CC0), trickest/cve (MIT). See `reports/README.md`.
