@@ -4,8 +4,8 @@
 
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **32 Claude Code skills** and
-four helper programs. Clone it, ask Claude to check it, give it a target.
+One protocol for authorized bug-bounty and web-security work, as **32 Claude Code skills**,
+**5 agents** and four helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
 `zp-scope check` and obeys the exit code, so an out-of-scope host is refused mechanically rather
@@ -69,6 +69,19 @@ what to do.
 Each one carries its gate, an executable procedure, real commands with a documented fallback for
 every tool it likes, payload tables, a **confirm-or-kill** section, the escalation paths, and the
 pitfalls that make reports get closed.
+
+## The five agents
+
+| Agent | Runs | Network |
+|---|---|---|
+| `zp-recon-sweep` | passive fan-out over third-party sources | never touches the target |
+| `zp-surface-probe` | probes and ranks one host | gated |
+| `zp-class-hunter` | one vuln class, one host, isolated context | gated |
+| `zp-verifier` | tries to **refute** a finding; defaults to REFUTED when unsure | read-only |
+| `zp-report-drafter` | drafts the report from evidence on disk | **no network tools** |
+
+Each re-checks `zp-scope` itself, because a subagent inherits none of the session's discipline.
+The validator enforces that: an agent with network-capable tools and no gate is a hard error.
 
 ## The four helper programs
 

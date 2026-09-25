@@ -170,7 +170,9 @@ politeness would have.
 
 **A subagent inherits none of this.** Paste the rate limit, the attribution header with
 its real value, and the banned techniques into every dispatch preamble. Global defaults
-do not travel.
+do not travel. ZeroProtocol's own agents (`zp-surface-probe`, `zp-class-hunter`) re-run
+`zp-scope check` themselves as a backstop - but a backstop is not a substitute for
+briefing them.
 
 ### 9. Connectivity precheck
 

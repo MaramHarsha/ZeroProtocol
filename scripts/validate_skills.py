@@ -137,9 +137,11 @@ def main() -> int:
         referenced.update(re.findall(r"`(zp-[a-z0-9-]+)`", text))
         rows.append((d.name, nlines, len(desc)))
 
-    # bin/zp-* and scripts/zp-*.py are helper PROGRAMS, not skills
+    # bin/zp-* and scripts/zp-*.py are helper PROGRAMS, and .claude/agents/zp-*.md are AGENTS -
+    # none of them are skills, so a mention of one is not a dangling skill reference.
     helpers = {p.name for p in (REPO / "bin").glob("zp-*")} if (REPO / "bin").is_dir() else set()
     helpers |= {p.stem for p in SKILLS.rglob("scripts/zp-*.py")}
+    helpers |= {p.stem for p in (REPO / ".claude" / "agents").glob("zp-*.md")}
     referenced -= helpers
 
     # every hunter must be reachable from the router
@@ -158,6 +160,51 @@ def main() -> int:
     for ref in sorted(referenced - names):
         errors.append(f"dangling reference to {ref!r}: no skills/{ref}/ directory exists")
 
+    # ---- agents ---------------------------------------------------------- #
+    agent_rows = []
+    agents_dir = REPO / ".claude" / "agents"
+    if agents_dir.is_dir():
+        for af in sorted(agents_dir.glob("zp-*.md")):
+            rel = af.relative_to(REPO)
+            text = af.read_text(encoding="utf-8")
+            meta, body, err = parse_frontmatter(text)
+            if err:
+                errors.append(f"{rel}: {err}")
+                continue
+            name = meta.get("name", "")
+            desc = meta.get("description", "")
+            tools = meta.get("tools", "")
+
+            if name != af.stem:
+                errors.append(f"{rel}: name is {name!r} but the file is {af.stem!r}.md")
+            if not desc:
+                errors.append(f"{rel}: no `description` - nothing would ever select this agent")
+            elif len(desc) < MIN_DESC:
+                warns.append(f"{rel}: description is {len(desc)} chars; under {MIN_DESC} "
+                             "selects unreliably")
+            if not tools:
+                warns.append(f"{rel}: no `tools` - it will inherit the full tool set")
+
+            # The rule that matters: an agent that can send traffic must carry the gate,
+            # because a subagent inherits none of the session's discipline.
+            can_reach_network = any(t in tools for t in ("Bash", "WebFetch", "WebSearch")) or not tools
+            if can_reach_network and "zp-scope check" not in body:
+                errors.append(
+                    f"{rel}: has network-capable tools ({tools or 'inherited: all'}) but never "
+                    "states `zp-scope check` - a subagent inherits nothing, so it would hunt "
+                    "without a gate")
+            # The contract may be a table, a `0` proceed · `1` refuse list, or prose. Look for
+            # all four exit codes as standalone tokens in the window after the gate command,
+            # rather than matching one phrasing.
+            if can_reach_network:
+                i = body.find("zp-scope check")
+                window = body[i:i + 1800] if i != -1 else ""
+                missing = [c for c in "0134" if not re.search(rf"(?<![\w.]){c}(?![\w.])", window)]
+                if missing:
+                    warns.append(f"{rel}: gate section does not state exit code(s) "
+                                 f"{', '.join(missing)} - spell out the full 0/1/3/4 contract")
+            agent_rows.append((af.stem, text.count("\n") + 1, len(desc), tools or "inherited"))
+
     if not args.quiet:
         print(f"ZeroProtocol skill pack: {len(rows)} skills\n")
         w = max((len(r[0]) for r in rows), default=10)
@@ -165,6 +212,11 @@ def main() -> int:
             print(f"  {n:<{w}}  {nl:>4} lines  desc {dl:>4}")
         total = sum(r[1] for r in rows)
         print(f"\n  {total} lines of skill content across {len(rows)} skills")
+        if agent_rows:
+            print(f"\n  {len(agent_rows)} agents")
+            aw = max(len(r[0]) for r in agent_rows)
+            for n, nl, dl, tl in agent_rows:
+                print(f"    {n:<{aw}}  {nl:>4} lines  desc {dl:>4}  tools: {tl}")
         if warns:
             print(f"\n{len(warns)} warning(s):")
             for x in warns:

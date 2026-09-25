@@ -57,7 +57,8 @@ The short version of what that skill enforces:
 ## Repository layout
 
 ```
-skills/            30 skills: zeroprotocol (router) + 29 zp-*
+skills/            32 skills: zeroprotocol (router) + 31 zp-*
+.claude/agents/    5 agents, each carrying the scope contract
 bin/zp-scope       the authorization gate - exit codes are the contract
 bin/zp-doctor      toolchain survey: what works, what degrades, how it degrades
 bin/zp-init        scaffold a .zeroprotocol/ engagement workspace
