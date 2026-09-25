@@ -48,6 +48,7 @@ mapping. The numbering is the order of first traversal and the order the gates f
 | 0 | Engagement setup | this skill | none | `.zeroprotocol/notes.md` with mode + objective |
 | 1 | Scope + authorization | `zp-scope` | none | `scope.yaml` with `confirmed: true` |
 | 1b | Toolchain survey | `zp-toolchain` | none | known capability set, fallbacks chosen |
+| 1c | Browser | `zp-browser` | none to install; scope-gated to navigate | a JS engine, or an honest `no browser` record |
 | 2 | Passive recon | `zp-recon-passive` | scope file exists (confirmation not required) | `surface/hosts.txt`, `surface/urls.txt` |
 | 3 | Active recon | `zp-recon-active` | **scope confirmed** | `surface/live.jsonl`, `surface/tech.md` |
 | 3b | Content + parameter discovery | `zp-content-discovery` | scope confirmed | `surface/endpoints.txt` |
@@ -89,6 +90,17 @@ un-submit a bad report.
 Then declare the objective in one line - *"today I target <feature> to reach
 <ATO | RCE | mass exfil | tenant break | payment manipulation>"* - and pick **one or
 two** vuln classes. "Just looking around" is the most expensive mode there is.
+
+### Priors - two minutes that reshape the session
+
+```bash
+zp-intel program <handle>      # what actually gets found and paid on this program
+zp-intel class <class>         # how accepted reports of a class were framed
+```
+
+A class that appears repeatedly in a program's disclosures means the codebase has a *pattern* of
+it - hunt the siblings nobody reported, and check whether shipped fixes still hold. A bypass of a
+deployed fix is a new bug and never a duplicate. See `zp-intel`.
 
 ### Budget
 
@@ -183,6 +195,7 @@ Then dispatch in this order:
 | checkout, payments, refunds, subscriptions, quotas, invites, approvals | `zp-business-logic` |
 | Node/Express/Next/SPA target, JSON merge or clone, query-string-to-object parsing | `zp-proto-pollution` |
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
+| a client-side class needs execution proof, or a route only exists after JS | `zp-browser` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
 | LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
 
@@ -337,7 +350,7 @@ seed notes; `zp-memory-seed` copies them in.
 
 ## Skill index
 
-**Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`
+**Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`

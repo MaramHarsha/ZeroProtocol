@@ -89,6 +89,10 @@ data exposures are published on the target's own website.
 
 Duplicates are the largest single cause of wasted effort in bug bounty. Spend three minutes.
 
+```bash
+zp-intel dedup <program> <your finding's key terms>    # exit 8 == likely duplicate, READ THEM
+```
+
 ```
 1. Program hacktivity        every disclosed report on this program; scan titles and endpoints
 2. The last ~5 disclosures   what the program's triagers have recently accepted
@@ -142,7 +146,7 @@ honestly and say what you did not prove.
 
 ## Two adversarial gates
 
-**Browser verification** is mandatory for every client-side class - reflected, stored and DOM XSS,
+**Browser verification** (via `zp-browser`) is mandatory for every client-side class - reflected, stored and DOM XSS,
 prototype pollution, `postMessage`, DOM clobbering, CORS reads, clickjacking. A curl reflection is
 not execution. Use a DOM marker, capture a screenshot, note the browser version.
 

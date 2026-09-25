@@ -71,6 +71,22 @@ finding is not ready.
 Root access, physical access, a rooted device, an already-compromised admin, a user pasting into
 a console. Unstated preconditions are how a Medium gets written up as a Critical.
 
+## Browser, for client-side claims
+
+If the finding is XSS, prototype pollution, `postMessage`, a CORS read or clickjacking, reproduce
+it in a real browser or you have not verified it. Use **your own** session name - never the
+hunter's - because independence is the whole point of this agent.
+
+```bash
+agent-browser --session zp-verify-<finding> open "<url>"
+agent-browser --session zp-verify-<finding> eval "document.title"
+agent-browser --session zp-verify-<finding> close
+```
+
+See `skills/zp-browser/SKILL.md`. No JS engine available means you say so in the verdict rather
+than passing the finding through unverified.
+
+
 ## Verdict
 
 - **SURVIVES** - you tried the above and could not break it. State what you reproduced and how.

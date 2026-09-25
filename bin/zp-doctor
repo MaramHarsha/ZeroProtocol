@@ -155,6 +155,19 @@ TOOLS = [
     ("slither", "web3", "extra", "Solidity static analysis",
      "pipx install slither-analyzer", "manual review against the standard class list"),
 
+    # ---- browser: required to PROVE any client-side class ------------------- #
+    ("agent-browser", "browser", "strong",
+     "headless Chrome over CDP - the only way to prove XSS/DOM/CORS execution",
+     "npm install -g agent-browser && agent-browser install",
+     "playwright chromium, or `chromium --headless --screenshot`. A text browser "
+     "(lynx/w3m/links) CANNOT execute JavaScript and can neither confirm nor refute these classes"),
+    ("chromium", "browser", "strong", "raw headless Chrome - screenshots and --dump-dom",
+     "apt install chromium | brew install --cask chromium",
+     "agent-browser or playwright; without any JS engine, client-side classes are untestable"),
+    ("node", "browser", "extra", "runtime for the agent-browser npm install path",
+     "apt install nodejs | brew install node",
+     "install the agent-browser native binary via cargo or brew instead"),
+
     # ---- proxy / traffic --------------------------------------------------- #
     ("mitmproxy", "proxy", "extra", "capture and replay a real traffic corpus",
      "pipx install mitmproxy", "Caido or Burp, or curl with saved request files"),
@@ -169,7 +182,7 @@ TOOLS = [
 ]
 
 PHASE_ORDER = ["core", "meta", "recon-passive", "recon-active", "content-discovery",
-               "exploit", "takeover", "cloud", "mobile", "web3", "proxy"]
+               "exploit", "takeover", "cloud", "mobile", "web3", "browser", "proxy"]
 
 # Capability gates: a capability is DEGRADED if none of its tools are present.
 CAPABILITIES = {
@@ -186,6 +199,7 @@ CAPABILITIES = {
     "mobile static review": ["jadx", "apktool"],
     "smart-contract PoC": ["forge"],
     "traffic corpus replay": ["mitmproxy", "caido"],
+    "browser proof of client-side execution": ["agent-browser", "playwright", "chromium"],
 }
 
 

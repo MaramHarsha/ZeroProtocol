@@ -92,7 +92,7 @@ https://target.com/#__proto__[zpcanary]=zp91234
 https://target.com/?constructor[prototype][zpcanary]=zp91234
 ```
 
-Then in the console:
+Then in the console (or via `zp-browser`'s `eval`):
 
 ```js
 Object.prototype.zpcanary          // "zp91234" => polluted

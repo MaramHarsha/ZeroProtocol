@@ -105,7 +105,8 @@ CSP-friendly:    a whitelisted-CDN JSONP endpoint, or a DOM-clobbering gadget
 
 Stack the encodings: many WAFs decode once and the app decodes twice.
 
-**6. Prove it in a browser.** Mandatory for every client-side class.
+**6. Prove it in a browser.** Mandatory for every client-side class - see `zp-browser` for the
+headless setup and session rules.
 
 Use a **DOM marker**, not `alert()` - headless browsers suppress dialogs and `alert` proves
 nothing in a screenshot:

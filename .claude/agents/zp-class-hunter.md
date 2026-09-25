@@ -56,6 +56,24 @@ scope to test at all.
    variants tried, dimensions covered, encoding steps, the exact blocker, differential evidence.
    A class with no record and no evidenced `not-applicable` reason counts as **not tested**.
 
+## Browser proof - for every client-side class
+
+Reflected/stored/DOM XSS, prototype pollution, `postMessage`, CORS reads and clickjacking are
+**not confirmed by curl**. Load `skills/zp-browser/SKILL.md` and prove execution in a real engine.
+
+```bash
+agent-browser --session zp-<class>-<host> open "<url>"
+agent-browser --session zp-<class>-<host> eval "document.title"        # expect your DOM marker
+agent-browser --session zp-<class>-<host> screenshot
+agent-browser --session zp-<class>-<host> close                        # when the class is done
+```
+
+**Pass `--session` on every single command.** The default session is shared, so another agent
+will navigate your page out from under you and your refs will be garbage. Use a DOM marker, never
+`alert()` - headless Chrome suppresses dialogs. If no JS engine is installed, record
+`not-applicable: no browser` in the coverage file rather than claiming the class is clean.
+
+
 ## Stop at proof
 
 Your job ends at evidence, not access. Per class:

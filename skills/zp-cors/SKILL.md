@@ -60,7 +60,7 @@ curl -sk "$EP" -H "Cookie: session=$TOK_A" | head -c 200   # authenticated
 If both return the same thing, the CORS header exposes nothing and there is no finding. This
 single check kills most CORS reports before they are written - do it first.
 
-**3. Prove it with a real page.** A `curl` header dump is not proof of cross-origin read; browsers
+**3. Prove it with a real page** (`zp-browser` drives the headless engine). A `curl` header dump is not proof of cross-origin read; browsers
 enforce CORS, so the browser must be the witness.
 
 ```html

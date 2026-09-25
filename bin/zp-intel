@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""zp-intel - query the corpus of publicly disclosed bug bounty reports.
+
+Bug bounty compounds through prior art. Before hunting a class you want to know what has
+actually paid on this program and how the accepted reports were framed; before submitting you
+want to know whether it is a duplicate. This queries a local index of publicly disclosed
+HackerOne reports so both checks take seconds and work offline.
+
+The index holds PUBLIC METADATA ONLY - program, title, report URL, upvotes, bounty, weakness.
+No report bodies are stored or redistributed; follow the link to read one. See intel/README.md
+for provenance.
+
+    zp-intel stats                          what is in the index
+    zp-intel program shopify                priors - what gets found and paid here
+    zp-intel class idor --min-bounty 500    learn a class from reports that paid
+    zp-intel search "password reset" host   free text over titles
+    zp-intel dedup shopify idor orders      THE triage check - has this been reported?
+    zp-intel top --limit 20                 highest-bounty disclosures
+    zp-intel update                         refresh from upstream
+
+Exit 0 normally; `dedup` exits 8 when it finds likely duplicates, so a skill can branch on it.
+Stdlib only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import re
+import sys
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+INDEX = REPO / "intel" / "hackerone-reports.csv"
+UPSTREAM = ("https://raw.githubusercontent.com/reddelexc/hackerone-reports/master/data.csv")
+
+DUPES_FOUND = 8
+
+# Map ZeroProtocol class names onto the weakness vocabulary the corpus actually uses.
+CLASS_ALIASES = {
+    "xss": ["cross-site scripting", "xss"],
+    "sqli": ["sql injection"],
+    "idor": ["insecure direct object reference", "idor", "improper access control"],
+    "authz": ["improper access control", "privilege escalation", "improper authorization"],
+    "ssrf": ["server-side request forgery", "ssrf"],
+    "rce": ["code injection", "command injection", "remote code execution", "os command"],
+    "xxe": ["xml external entit", "xxe"],
+    "lfi": ["path traversal", "file inclusion"],
+    "csrf": ["cross-site request forgery", "csrf"],
+    "cors": ["cross-origin resource sharing", "cors"],
+    "open-redirect": ["open redirect"],
+    "takeover": ["subdomain takeover", "domain takeover"],
+    "upload": ["unrestricted upload", "file upload"],
+    "jwt-oauth": ["improper authentication", "oauth", "authentication bypass", "session"],
+    "business-logic": ["business logic"],
+    "race": ["race condition"],
+    "smuggling": ["http request smuggling", "request smuggling"],
+    "cache-poison": ["cache poisoning", "cache deception"],
+    "info-disclosure": ["information disclosure", "sensitive data exposure"],
+    "proto-pollution": ["prototype pollution"],
+    "graphql": ["graphql"],
+    "ssti": ["server-side template injection", "template injection"],
+    "deser": ["deserialization"],
+    "llm": ["prompt injection", "llm"],
+}
+
+STOP = {"the", "a", "an", "in", "on", "of", "to", "and", "or", "for", "via", "with", "is",
+        "at", "by", "from", "allows", "can", "using"}
+
+
+def load() -> list[dict]:
+    if not INDEX.is_file():
+        print(f"zp-intel: no index at {INDEX}\n"
+              f"          run: zp-intel update", file=sys.stderr)
+        sys.exit(1)
+    with INDEX.open(encoding="utf-8", errors="replace") as fh:
+        return list(csv.DictReader(fh))
+
+
+def bounty(r: dict) -> float:
+    try:
+        return float(r.get("bounty") or 0)
+    except ValueError:
+        return 0.0
+
+
+def upvotes(r: dict) -> int:
+    try:
+        return int(r.get("upvotes") or 0)
+    except ValueError:
+        return 0
+
+
+def link(r: dict) -> str:
+    u = (r.get("link") or "").strip()
+    return u if u.startswith("http") else f"https://{u}"
+
+
+def show(rows: list[dict], limit: int, as_json: bool, title: str = "") -> None:
+    rows = rows[:limit]
+    if as_json:
+        print(json.dumps([{"program": r["program"], "title": r["title"], "url": link(r),
+                           "bounty": bounty(r), "upvotes": upvotes(r),
+                           "vuln_type": r.get("vuln_type", "")} for r in rows], indent=2))
+        return
+    if title:
+        print(f"\n{title}\n")
+    if not rows:
+        print("  nothing matched")
+        return
+    for r in rows:
+        b = bounty(r)
+        tag = f"${b:,.0f}".rjust(8) if b else "        "
+        print(f"  {tag}  {upvotes(r):>4}^  {r['program'][:22]:<22}  {r['title'][:88]}")
+        print(f"            {link(r)}")
+    print()
+
+
+def match_class(rows: list[dict], q: str) -> list[dict]:
+    q = q.lower().strip()
+    needles = CLASS_ALIASES.get(q.removeprefix("zp-"), [q])
+    return [r for r in rows
+            if any(n in (r.get("vuln_type") or "").lower() for n in needles)
+            or any(n in (r.get("title") or "").lower() for n in needles)]
+
+
+def cmd_stats(args) -> int:
+    rows = load()
+    import collections
+    vt = collections.Counter(r["vuln_type"] for r in rows if (r.get("vuln_type") or "").strip())
+    pg = collections.Counter(r["program"] for r in rows)
+    paid = sorted(b for b in (bounty(r) for r in rows) if b > 0)
+    print(f"\n  {len(rows):,} disclosed reports · {len(pg)} programs · {len(vt)} weakness types")
+    if paid:
+        print(f"  {len(paid):,} with a disclosed bounty · median ${paid[len(paid)//2]:,.0f} "
+              f"· max ${paid[-1]:,.0f}")
+    print(f"  index: {INDEX}\n")
+    print("  most-reported weaknesses")
+    for k, n in vt.most_common(12):
+        print(f"    {n:5d}  {k}")
+    print("\n  most-reported programs")
+    for k, n in pg.most_common(8):
+        print(f"    {n:5d}  {k}")
+    print()
+    return 0
+
+
+def cmd_program(args) -> int:
+    rows = load()
+    q = args.name.lower()
+    hits = [r for r in rows if q in r["program"].lower()]
+    if not hits:
+        print(f"  no disclosed reports indexed for a program matching {args.name!r}")
+        print("  That is not evidence the program is unpicked - it may simply not disclose.")
+        return 0
+    import collections
+    vt = collections.Counter(r.get("vuln_type") or "(none)" for r in hits)
+    paid = [r for r in hits if bounty(r) > 0]
+    if not args.json:
+        print(f"\n  {len(hits)} disclosed reports for {args.name!r}"
+              f" · {len(paid)} with a bounty")
+        print("\n  what gets found here")
+        for k, n in vt.most_common(10):
+            print(f"    {n:4d}  {k}")
+    show(sorted(hits, key=lambda r: (-bounty(r), -upvotes(r))), args.limit, args.json,
+         "  highest-value disclosures")
+    return 0
+
+
+def cmd_class(args) -> int:
+    rows = match_class(load(), args.name)
+    rows = [r for r in rows if bounty(r) >= args.min_bounty]
+    show(sorted(rows, key=lambda r: (-bounty(r), -upvotes(r))), args.limit, args.json,
+         f"  {len(rows)} disclosed reports matching class {args.name!r}")
+    return 0
+
+
+def cmd_search(args) -> int:
+    rows = load()
+    terms = [t.lower() for t in args.terms]
+    hits = [r for r in rows if all(t in (r["title"] + " " + r["program"]).lower() for t in terms)]
+    show(sorted(hits, key=lambda r: (-bounty(r), -upvotes(r))), args.limit, args.json,
+         f"  {len(hits)} reports matching {' + '.join(terms)!r}")
+    return 0
+
+
+def cmd_top(args) -> int:
+    rows = load()
+    show(sorted(rows, key=lambda r: -bounty(r)), args.limit, args.json,
+         "  highest disclosed bounties")
+    return 0
+
+
+def cmd_dedup(args) -> int:
+    """The zp-triage check. Scores overlap between your finding and prior disclosures."""
+    rows = load()
+    prog = args.program.lower()
+    terms = {t.lower() for t in args.terms if t.lower() not in STOP and len(t) > 2}
+
+    scope = [r for r in rows if prog in r["program"].lower()]
+    if not scope:
+        print(f"  no disclosed reports indexed for {args.program!r} - cannot dedup from this "
+              f"index alone.")
+        print(f"  Still check the program's own hacktivity page before submitting.\n")
+        return 0
+
+    scored = []
+    for r in scope:
+        hay = (r["title"] + " " + (r.get("vuln_type") or "")).lower()
+        hit = {t for t in terms if t in hay}
+        if hit:
+            scored.append((len(hit) / max(1, len(terms)), hit, r))
+    scored.sort(key=lambda x: (-x[0], -bounty(x[2])))
+
+    strong = [s for s in scored if s[0] >= 0.5]
+    if args.json:
+        print(json.dumps({"program": args.program, "terms": sorted(terms),
+                          "indexed_for_program": len(scope),
+                          "likely_duplicates": [
+                              {"overlap": round(o, 2), "matched": sorted(h),
+                               "title": r["title"], "url": link(r), "bounty": bounty(r)}
+                              for o, h, r in scored[:args.limit]]}, indent=2))
+        return DUPES_FOUND if strong else 0
+
+    print(f"\n  {len(scope)} disclosed reports indexed for {args.program!r}; "
+          f"{len(scored)} share terms with your finding\n")
+    if not scored:
+        print("  No overlap found in this index. That is encouraging, not conclusive -\n"
+              "  most reports are never disclosed. Check the program's hacktivity too.\n")
+        return 0
+    for o, h, r in scored[:args.limit]:
+        flag = "LIKELY DUP" if o >= 0.5 else "  related "
+        b = bounty(r)
+        print(f"  {flag}  {o:.0%}  {'$%s' % format(b, ',.0f') if b else '':>8}  {r['title'][:82]}")
+        print(f"              matched: {', '.join(sorted(h))}")
+        print(f"              {link(r)}")
+    print()
+    if strong:
+        print("  Read the likely duplicates before writing. If yours is genuinely different -\n"
+              "  a different endpoint, or a bypass of the fix they shipped - say so explicitly\n"
+              "  in the report and link the prior one. A patch bypass is a NEW bug.\n")
+    return DUPES_FOUND if strong else 0
+
+
+def cmd_update(args) -> int:
+    INDEX.parent.mkdir(parents=True, exist_ok=True)
+    print(f"  fetching {UPSTREAM}")
+    try:
+        req = urllib.request.Request(UPSTREAM, headers={"User-Agent": "ZeroProtocol/1.0"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = r.read()
+    except Exception as e:                                          # noqa: BLE001
+        print(f"  failed: {e}", file=sys.stderr)
+        return 1
+    tmp = INDEX.with_suffix(".csv.tmp")
+    tmp.write_bytes(data)
+    try:
+        with tmp.open(encoding="utf-8", errors="replace") as fh:
+            n = sum(1 for _ in csv.DictReader(fh))
+    except Exception as e:                                          # noqa: BLE001
+        print(f"  downloaded file is not readable CSV: {e}", file=sys.stderr)
+        tmp.unlink(missing_ok=True)
+        return 1
+    if n < 1000:
+        print(f"  refusing to replace the index with only {n} rows", file=sys.stderr)
+        tmp.unlink(missing_ok=True)
+        return 1
+    tmp.replace(INDEX)
+    print(f"  index updated: {n:,} reports -> {INDEX}")
+    return 0
+
+
+def main() -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true")
+    common.add_argument("--limit", type=int, default=12)
+
+    ap = argparse.ArgumentParser(prog="zp-intel", description=__doc__.split("\n")[0],
+                                 parents=[common])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("stats", parents=[common], help="what is in the index").set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("program", parents=[common], help="priors - what gets found and paid on a program")
+    p.add_argument("name"); p.set_defaults(func=cmd_program)
+
+    p = sub.add_parser("class", parents=[common], help="disclosed reports for a vulnerability class")
+    p.add_argument("name"); p.add_argument("--min-bounty", type=float, default=0)
+    p.set_defaults(func=cmd_class)
+
+    p = sub.add_parser("search", parents=[common], help="free text over titles")
+    p.add_argument("terms", nargs="+"); p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("dedup", parents=[common], help="has this finding been reported on this program?")
+    p.add_argument("program"); p.add_argument("terms", nargs="+")
+    p.set_defaults(func=cmd_dedup)
+
+    sub.add_parser("top", parents=[common], help="highest disclosed bounties").set_defaults(func=cmd_top)
+    sub.add_parser("update", parents=[common], help="refresh the index from upstream").set_defaults(func=cmd_update)
+
+    args = ap.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)
+    except KeyboardInterrupt:
+        sys.exit(130)
