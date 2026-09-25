@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/zeroprotocol-banner.png" alt="ZeroProtocol — the authorization boundary is a program, not a promise" width="100%">
+  <img src="assets/zeroprotocol-banner.png" alt="ZeroProtocol — built for bug bounty hunting and web security research" width="100%">
 </p>
 
 # ZeroProtocol
