@@ -53,6 +53,14 @@ SCALAR_KEYS = (
     "user_agent",
     "contact",
     "notes",
+    # red-team tier (zp-redteam-mode): a bounty page does not authorize lateral movement
+    "engagement",          # bug-bounty | red-team | pentest | own-asset
+    "authorization_ref",   # the signed SoW / authorization-to-test reference
+    "contact_technical",   # named technical point of contact
+    "contact_stop",        # who can stop the engagement
+    "window",              # authorized dates/hours
+    "deconfliction",       # channel + procedure
+    "stop_condition",      # what ends it immediately
 )
 
 TEMPLATE = """\
@@ -188,24 +196,53 @@ def _q(v) -> str:
 
 
 def dump_scope(d: dict) -> str:
+    """Write every known scalar key, not a hardcoded subset.
+
+    This used to enumerate a fixed tuple, so any key added later (the red-team engagement
+    fields) was parsed on read and silently dropped on write - the tier could never unlock.
+    Driving it from SCALAR_KEYS means adding a key is enough.
+    """
     lines = ["# ZeroProtocol scope contract", "#",
              "# Edited by zp-scope. Wildcard *.example.com does NOT match the apex example.com.",
              ""]
-    for k in ("target", "platform", "program_url", "contact"):
+    ident = ("target", "platform", "program_url", "contact", "engagement")
+    signoff = ("confirmed_at", "confirmed_by", "authorization")
+    roe = ("rate_limit_rps", "max_concurrency", "testing_window", "user_agent", "notes")
+    redteam = ("authorization_ref", "contact_technical", "contact_stop", "window",
+               "deconfliction", "stop_condition")
+
+    for k in ident:
         lines.append(f"{k}: {_q(d.get(k, ''))}")
     lines.append("")
     lines.append(f"confirmed: {'true' if d.get('confirmed') else 'false'}")
-    for k in ("confirmed_at", "confirmed_by", "authorization"):
+    for k in signoff:
         lines.append(f"{k}: {_q(d.get(k, ''))}")
+
+    if (d.get("engagement") or "").strip().lower() == "red-team" or any(
+            str(d.get(k) or "").strip() for k in redteam):
+        lines.append("")
+        lines.append("# red-team engagement facts (zp-redteam-mode) - all six required")
+        for k in redteam:
+            lines.append(f"{k}: {_q(d.get(k, ''))}")
+
     for k in LIST_KEYS:
         lines.append("")
         lines.append(f"{k}:")
         for item in d.get(k, []):
             lines.append(f"  - {_q(item)}")
     lines.append("")
-    for k in ("rate_limit_rps", "max_concurrency", "testing_window", "user_agent", "notes"):
+    for k in roe:
         v = d.get(k, "")
         lines.append(f"{k}: {v if isinstance(v, (int, float)) else _q(v)}")
+
+    # anything else that was parsed but is not in a group above - never drop a key again
+    known = set(ident) | set(signoff) | set(roe) | set(redteam) | set(LIST_KEYS) | {"confirmed"}
+    extra = [k for k in d if k not in known]
+    if extra:
+        lines.append("")
+        for k in sorted(extra):
+            v = d[k]
+            lines.append(f"{k}: {v if isinstance(v, (int, float)) else _q(v)}")
     return "\n".join(lines) + "\n"
 
 
@@ -398,6 +435,7 @@ def cmd_status(args) -> int:
     n_in = len(scope.get("in_scope", []))
     n_out = len(scope.get("out_of_scope", []))
     print(f"CONFIRMED  {path}")
+    print(f"  engagement    {scope.get('engagement') or 'bug-bounty (default)'}")
     print(f"  target        {scope.get('target') or '-'}")
     print(f"  platform      {scope.get('platform') or '-'}")
     print(f"  confirmed by  {scope.get('confirmed_by') or '-'} at {scope.get('confirmed_at') or '-'}")
@@ -515,6 +553,72 @@ def cmd_revoke(args) -> int:
     return ALLOW
 
 
+REDTEAM_REQUIRED = [
+    ("authorization_ref", "a signed SoW or written authorization-to-test reference"),
+    ("contact_technical", "a named technical point of contact"),
+    ("contact_stop", "someone with authority to stop the engagement"),
+    ("window", "the authorized dates/hours"),
+    ("deconfliction", "the deconfliction channel and procedure"),
+    ("stop_condition", "the agreed immediate-stop condition"),
+]
+
+
+def cmd_tier(args) -> int:
+    """Is the zp-redteam-* tier authorized? Exit 0 yes, 9 no.
+
+    Adversary emulation moves laterally by design, which a bug bounty program page does not
+    authorize. This refuses to unlock the tier until the engagement facts exist in writing.
+    """
+    path, scope = load(args)
+    if path is None:
+        print("DENY   no scope file - the red-team tier is locked")
+        return NOSCOPE
+    problems = []
+    if not scope.get("confirmed"):
+        problems.append("the scope file is not confirmed by a human")
+    eng = (scope.get("engagement") or "").strip().lower()
+    if eng != "red-team":
+        problems.append(f"engagement is {eng or 'unset'!r}, not 'red-team' "
+                        "(set it with: zp-scope engagement red-team)")
+    for key, what in REDTEAM_REQUIRED:
+        if not str(scope.get(key) or "").strip():
+            problems.append(f"{key} is empty - needs {what}")
+
+    if problems:
+        print("LOCKED red-team tier is NOT authorized:")
+        for p_ in problems:
+            print(f"  - {p_}")
+        print("\nA bug bounty program page does not authorize lateral movement, identity-provider")
+        print("testing, or post-exploitation. See skills/zp-redteam-mode/SKILL.md.")
+        return 9
+    print("AUTHORIZED red-team tier unlocked")
+    print(f"  authorization {scope.get('authorization_ref')}")
+    print(f"  window        {scope.get('window')}")
+    print(f"  contacts      {scope.get('contact_technical')} / {scope.get('contact_stop')}")
+    print(f"  deconfliction {scope.get('deconfliction')}")
+    print(f"  stop when     {scope.get('stop_condition')}")
+    return ALLOW
+
+
+def cmd_engagement(args) -> int:
+    path, scope = load(args)
+    if path is None:
+        print("zp-scope: no scope file (run: zp-scope init)", file=sys.stderr)
+        return NOSCOPE
+    scope["engagement"] = args.type
+    if args.type == "red-team":
+        scope["confirmed"] = False
+        scope["confirmed_at"] = ""
+        print("note: switching to red-team clears the confirmation - the tier needs its own sign-off")
+    path.write_text(dump_scope(scope), encoding="utf-8")
+    print(f"engagement: {args.type}")
+    if args.type == "red-team":
+        print("\nrecord these in the scope file, then confirm:")
+        for k, what in REDTEAM_REQUIRED:
+            print(f"  {k}: <{what}>")
+    return ALLOW
+
+
 def cmd_filter(args) -> int:
     """Read hosts on stdin, print only the in-scope ones. The safe funnel for
     piping a recon wordlist into anything that sends traffic."""
@@ -575,6 +679,14 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("revoke", help="re-lock active phases")
     p.set_defaults(func=cmd_revoke)
+
+    p = sub.add_parser("tier", help="is the zp-redteam-* tier authorized? exit 0 yes, 9 no")
+    p.add_argument("name", nargs="?", default="redteam", choices=["redteam"])
+    p.set_defaults(func=cmd_tier)
+
+    p = sub.add_parser("engagement", help="set the engagement type")
+    p.add_argument("type", choices=["bug-bounty", "red-team", "pentest", "own-asset"])
+    p.set_defaults(func=cmd_engagement)
 
     p = sub.add_parser("filter", help="stdin hosts -> stdout in-scope hosts only")
     p.set_defaults(func=cmd_filter)
