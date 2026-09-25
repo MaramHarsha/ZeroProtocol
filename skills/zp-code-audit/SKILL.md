@@ -22,7 +22,10 @@ sink -> reachable route -> remote proof.
 # how requests enter, and what sits in front of them
 ls -d */ ; cat README* 2>/dev/null | head -40
 grep -rniE 'route|router|urlpatterns|@(Get|Post|Put|Delete|RequestMapping)|app\.(get|post)' \
-  --include='*.{js,ts,py,rb,php,go,java,cs}' . | head -40
+  --include='*.js' --include='*.ts' --include='*.py' --include='*.rb' \
+  --include='*.php' --include='*.go' --include='*.java' --include='*.cs' . | head -40
+# NB: --include takes one fnmatch glob and does NOT expand braces - '*.{js,py}' silently
+# matches nothing and the whole sweep returns 0 hits while exiting 0.
 # where authorization is supposed to happen
 grep -rniE 'middleware|before_action|@PreAuthorize|authorize|requireAuth|isAdmin|can\(|policy' . | head -30
 ```
@@ -89,7 +92,7 @@ The three highest-yield questions to ask of every candidate:
 
 ```bash
 git log --oneline -S 'password' -- . | head
-git log --oneline --grep -iE 'security|vuln|CVE|fix.*auth|sanitiz|escape|injection' | head -30
+git log --oneline -i -E --grep='security|vuln|CVE|fix.*auth|sanitiz|escape|injection' | head -30
 git log -p --all -S 'AKIA' | head -40          # secrets removed from HEAD but still in history
 git diff HEAD~50 --stat | tail -20
 ```

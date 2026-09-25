@@ -1,7 +1,11 @@
+<p align="center">
+  <img src="assets/zeroprotocol-banner.png" alt="ZeroProtocol — the authorization boundary is a program, not a promise" width="100%">
+</p>
+
 # ZeroProtocol
 
 One protocol for authorized bug-bounty and web-security work, as **32 Claude Code skills** and
-three helper programs. Clone it, ask Claude to check it, give it a target.
+four helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
 `zp-scope check` and obeys the exit code, so an out-of-scope host is refused mechanically rather
@@ -66,12 +70,13 @@ Each one carries its gate, an executable procedure, real commands with a documen
 every tool it likes, payload tables, a **confirm-or-kill** section, the escalation paths, and the
 pitfalls that make reports get closed.
 
-## The three helper programs
+## The four helper programs
 
 ```bash
 zp-scope check https://api.target.com/v1   # 0 allow · 1 deny · 3 unconfirmed · 4 no scope file
 zp-doctor                                  # what works on this box, and how it degrades
 zp-init target.com                         # scaffold .zeroprotocol/
+zp-memory-seed                             # seed the operating notes into this project's memory
 ```
 
 `zp-scope` is the keystone. `init` writes the contract, `confirm` requires a human to state their
