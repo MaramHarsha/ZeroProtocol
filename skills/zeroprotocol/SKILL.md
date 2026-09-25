@@ -184,6 +184,7 @@ Then dispatch in this order:
 | coupons, balances, limits, invites, concurrent state | `zp-race` |
 | `/api/`, Swagger, OpenAPI, versioned routes | `zp-api` |
 | `/graphql`, `__schema`, Apollo | `zp-graphql` |
+| gRPC, protobuf, server reflection, or a gRPC-Web/JSON transcoding gateway | `zp-grpc` |
 | any `Access-Control-Allow-*` header | `zp-cors` |
 | dangling CNAME, vendor 404, unclaimed bucket | `zp-takeover` |
 | a URL-valued parameter that redirects (next, returnTo, callback, dest) | `zp-open-redirect` |
@@ -361,7 +362,7 @@ seed notes; `zp-memory-seed` copies them in.
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
-**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`
+**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`, `zp-grpc`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
