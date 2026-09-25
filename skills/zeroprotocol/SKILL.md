@@ -188,6 +188,8 @@ Then dispatch in this order:
 | dangling CNAME, vendor 404, unclaimed bucket | `zp-takeover` |
 | a URL-valued parameter that redirects (next, returnTo, callback, dest) | `zp-open-redirect` |
 | two components read the same value - parser, normalizer, validator vs sink | `zp-semantic-confusion` |
+| a 500 leaks a path, /actuator answers, or login replies differ for real vs fake accounts | `zp-info-disclosure` |
+| a 101 Switching Protocols, `new WebSocket`, or socket.io | `zp-websocket` |
 | cloud metadata reachable, bucket URLs, IAM artifacts | `zp-cloud` |
 | an APK/IPA in scope | `zp-mobile` |
 | a contract address or chain asset in scope | `zp-web3` |
@@ -354,11 +356,11 @@ seed notes; `zp-memory-seed` copies them in.
 ## Skill index
 
 **Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
-**Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`
+**Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
-**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`
+**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three

