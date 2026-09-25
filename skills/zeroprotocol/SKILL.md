@@ -1,11 +1,11 @@
 ---
 name: zeroprotocol
-description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to the thirty zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
+description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its thirty-one zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
 ---
 
 # ZeroProtocol
 
-One protocol over thirty focused skills. You are handed a target; you return
+One protocol over thirty-one focused skills. You are handed a target; you return
 reproduced, in-scope, impact-bearing findings written the way a triager wants to read
 them - or you return an honest, evidenced "nothing here", which is also a result.
 
@@ -53,7 +53,7 @@ mapping. The numbering is the order of first traversal and the order the gates f
 | 3b | Content + parameter discovery | `zp-content-discovery` | scope confirmed | `surface/endpoints.txt` |
 | 3c | Client-side asset mining | `zp-js-secrets` | scope confirmed | `surface/js-findings.md` |
 | 4 | Rank the surface | this skill | phase 3 artifacts exist | `queue.md` ranked P1/P2 |
-| 5 | Class hunt | the 18 hunter skills | ranked queue exists | `coverage/<host>/<class>.json` |
+| 5 | Class hunt | the hunter skills (dispatch table below) | ranked queue exists | `coverage/<host>/<class>.json` |
 | 6 | Prove | this skill + the hunter | a PASS signal | `evidence/`, second-stack repro |
 | 7 | Triage | `zp-triage` | a proven finding | verdict PASS/KILL/DOWNGRADE/CHAIN |
 | 8 | Report | `zp-report` | triage PASS | `findings/NNN-slug.md` |
@@ -180,6 +180,7 @@ Then dispatch in this order:
 | source in hand | `zp-code-audit` |
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
+| LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
 
 **Depth floor per dispatched class.** Before you may write the word *exhausted*: build
 the variant matrix `method x content-type x auth-state x encoding x transport` first,
@@ -311,7 +312,8 @@ seed notes; `zp-memory-seed` copies them in.
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
-**Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass)
+**Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
+LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
 **Output** - `zp-triage`, `zp-report`
 
 Known-CVE skills are checks against a *specific* published vulnerability, and they verify

@@ -36,7 +36,7 @@ original, readable, commented source.
 
 ```bash
 for f in *.js; do
-  m=$(tail -c 300 "$f" | grep -oE 'sourceMappingURL=[^ */]+' | cut -d= -f2)
+  m=$(tail -c 300 "$f" | grep -oE 'sourceMappingURL=[^[:space:]*]+' | cut -d= -f2)
   [ -n "$m" ] && echo "$f -> $m"
 done
 curl -sk "https://$H/static/js/main.abc123.js.map" -o main.map

@@ -26,7 +26,10 @@ for p in openapi.json openapi.yaml swagger.json swagger.yaml api-docs v2/api-doc
   code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "https://$H/$p")
   [ "$code" = "200" ] && echo "200 /$p"
 done
-curl -sk "https://$H/openapi.json" | jq -r '.paths | to_entries[] | .key as $p | .value | keys[] | "\(.|ascii_upcase) \($p)"'
+curl -sk "https://$H/openapi.json" | jq -r '
+  .paths | to_entries[] | .key as $p | .value | keys[]
+  | select(. as $m | ["get","put","post","delete","patch","head","options","trace"] | index($m))
+  | "\(.|ascii_upcase) \($p)"'   # the select() filters out sibling keys like "parameters"
 ```
 
 A spec hands you every route, every parameter, every auth requirement and every schema. Diff it

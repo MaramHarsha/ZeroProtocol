@@ -24,8 +24,12 @@ zp-doctor --json          # machine-readable - branch on this, do not guess
 zp-doctor --missing       # bare names, one per line
 ```
 
-Exit 0 means every **core** tool (`python3 curl dig git openssl jq`) is present. Exit 1
-means a core tool is missing - fix that before hunting; there is no fallback for `curl`.
+Exit 0 means every **core** tool (`python3 curl dig git openssl`) is present. Exit 1 means a
+core tool is missing - fix that before hunting; there is no fallback for `curl`.
+
+`jq` is tier *strong*, not core, so exit 0 does **not** guarantee it. Every `jq` pipeline in
+this pack therefore needs its stdlib fallback when `zp-doctor --missing` lists it:
+`python3 -c 'import json,sys; ...'`.
 
 **2. Read the capability verdict, not the tool list.** What matters is whether a
 *capability* is available, not which binary provides it:

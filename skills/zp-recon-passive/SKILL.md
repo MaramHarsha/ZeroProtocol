@@ -30,7 +30,7 @@ accidentally put in a SAN.
 ```bash
 while read -r d; do
   curl -sS --max-time 60 "https://crt.sh/?q=%25.$d&output=json" \
-    | jq -r '.[].name_value' | tr 'A-Z' 'a-z' | tr ',' '\n' | sed 's/^\*\.//'
+    | jq -r '.[].name_value' | tr 'A-Z' 'a-z' | sed 's/^\*\.//'
 done < surface/seeds.txt | sort -u | grep -E '^[a-z0-9.-]+$' >> surface/hosts.txt
 ```
 
@@ -115,12 +115,14 @@ curl -sS "https://api.shodan.io/shodan/host/search?key=$SHODAN_API_KEY&query=ssl
   | jq -r '.matches[].ip_str'
 ```
 
-**9. Dedupe, then hand over.**
+**9. Dedupe, then hand over.** `zp-scope filter` refuses while the scope is unconfirmed (exit 3) and writes an **empty** file, so check it landed rather than trusting the redirect.
 
 ```bash
 sort -u surface/hosts.txt -o surface/hosts.txt
 wc -l surface/hosts.txt surface/urls.txt surface/js.txt surface/params.txt
-cat surface/hosts.txt | zp-scope filter > surface/in-scope.txt   # THE funnel before any active phase
+# THE funnel before any active phase - note it needs a CONFIRMED scope, so it belongs at
+# the handoff into zp-recon-active, not here. Run it once the user has confirmed:
+cat surface/hosts.txt | zp-scope filter > surface/in-scope.txt
 ```
 
 ---

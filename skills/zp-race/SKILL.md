@@ -65,7 +65,9 @@ barrier, out, lock = threading.Barrier(N), [], threading.Lock()
 def go(i):
     c = http.client.HTTPSConnection(HOST, 443, context=ctx, timeout=20)
     # build the request but hold the last byte until everyone is ready
-    c.putrequest("POST", PATH)
+    c.putrequest("POST", PATH, skip_host=True)   # we set Host ourselves; without this
+                                                 # http.client adds a second one and the
+                                                 # request is invalid per RFC 7230
     c.putheader("Host", HOST)
     c.putheader("Authorization", f"Bearer {TOK}")
     c.putheader("Content-Type", "application/json")
