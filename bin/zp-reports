@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""zp-reports - local corpus of vulnerability reports, exploits and CVE intelligence.
+
+Pulls the public, redistributable exploit and CVE corpora onto disk and searches across all of
+them at once, so "what is CVE-2021-44228, is it exploited in the wild, and where is a PoC" is one
+command that works offline.
+
+    zp-reports status                 what is synced, and how big
+    zp-reports sync kev               CISA known-exploited CVEs   (public domain, ~2 MB, COMMITTED)
+    zp-reports sync nuclei            nuclei-templates            (MIT, ~735 MB, local only)
+    zp-reports sync exploitdb         Exploit-DB archive          (GPL, ~1 GB, local only)
+    zp-reports sync poc               CVE -> PoC repo index       (CC0, ~960 MB, local only)
+    zp-reports sync all               everything above
+    zp-reports cve CVE-2021-44228     KEV status + PoCs + nuclei template + exploits for one CVE
+    zp-reports find log4j             free text across every synced corpus
+    zp-reports read 160047            fetch and cache ONE disclosed HackerOne report to read
+
+Everything large lands in reports/ and is gitignored - see reports/README.md for why. Stdlib only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+REPORTS = REPO / "reports"
+KEV_PATH = REPORTS / "kev" / "known_exploited_vulnerabilities.json"
+
+KEV_URL = ("https://www.cisa.gov/sites/default/files/feeds/"
+           "known_exploited_vulnerabilities.json")
+
+# name -> (git url, local dir, licence, approx MB, one-line purpose)
+CORPORA = {
+    "nuclei": ("https://github.com/projectdiscovery/nuclei-templates.git",
+               "nuclei-templates", "MIT", 735,
+               "detection templates - the fastest way to check a known CVE"),
+    "exploitdb": ("https://gitlab.com/exploit-database/exploitdb.git",
+                  "exploitdb", "GPL-2.0", 1000,
+                  "the Exploit-DB archive with searchsploit"),
+    "poc": ("https://github.com/nomi-sec/PoC-in-GitHub.git",
+            "poc-in-github", "CC0-1.0", 960,
+            "CVE -> public PoC repository index"),
+    "trickest": ("https://github.com/trickest/cve.git",
+                 "trickest-cve", "MIT", 880,
+                 "a second CVE -> PoC index, different coverage"),
+}
+
+CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}", re.I)
+
+
+def human(nbytes: float) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if nbytes < 1024 or unit == "GB":
+            return f"{nbytes:.0f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.0f} GB"
+
+
+def dir_size(p: Path) -> int:
+    if not p.is_dir():
+        return 0
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+def have_git() -> bool:
+    return shutil.which("git") is not None
+
+
+# --------------------------------------------------------------------------- #
+
+def cmd_status(args) -> int:
+    print(f"\n  corpus root: {REPORTS}\n")
+    rows = []
+    kev_n = 0
+    if KEV_PATH.is_file():
+        try:
+            kev_n = json.loads(KEV_PATH.read_text()).get("count", 0)
+        except Exception:                                           # noqa: BLE001
+            pass
+    rows.append(("kev", KEV_PATH.is_file(), dir_size(KEV_PATH.parent),
+                 "public domain", f"{kev_n} known-exploited CVEs" if kev_n else "not synced"))
+    for k, (_, d, lic, mb, purpose) in CORPORA.items():
+        p = REPORTS / d
+        rows.append((k, p.is_dir(), dir_size(p), lic, purpose))
+    h1 = REPORTS / "hackerone"
+    rows.append(("hackerone", h1.is_dir(), dir_size(h1), "per-author",
+                 f"{len(list(h1.glob('*.md')))} reports cached" if h1.is_dir() else
+                 "fetched one at a time with `read`"))
+
+    w = max(len(r[0]) for r in rows)
+    for name, present, size, lic, note in rows:
+        mark = "synced " if present else "-      "
+        print(f"  {mark} {name:<{w}}  {human(size):>8}  {lic:<14} {note}")
+    print()
+    if not any(r[1] for r in rows):
+        print("  nothing synced yet.  zp-reports sync all   (~2.5 GB, local only)\n")
+    return 0
+
+
+def cmd_sync(args) -> int:
+    what = args.what
+    targets = list(CORPORA) + ["kev"] if what == "all" else [what]
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    rc = 0
+
+    for t in targets:
+        if t == "kev":
+            KEV_PATH.parent.mkdir(parents=True, exist_ok=True)
+            print(f"  fetching CISA KEV -> {KEV_PATH}")
+            try:
+                req = urllib.request.Request(KEV_URL,
+                                             headers={"User-Agent": "ZeroProtocol/1.0"})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    data = r.read()
+                parsed = json.loads(data)
+                if parsed.get("count", 0) < 100:
+                    print("    refusing: catalog looks truncated", file=sys.stderr)
+                    rc = 1
+                    continue
+                KEV_PATH.write_bytes(data)
+                print(f"    {parsed['count']} known-exploited CVEs "
+                      f"(catalog {parsed.get('catalogVersion','?')})")
+            except Exception as e:                                  # noqa: BLE001
+                print(f"    failed: {e}", file=sys.stderr)
+                rc = 1
+            continue
+
+        if t not in CORPORA:
+            print(f"  unknown corpus {t!r}", file=sys.stderr)
+            rc = 1
+            continue
+        if not have_git():
+            print("  git is required to sync the exploit corpora", file=sys.stderr)
+            return 1
+
+        url, d, lic, mb, purpose = CORPORA[t]
+        dest = REPORTS / d
+        if dest.is_dir():
+            print(f"  updating {t} ({lic}) in {dest}")
+            cmd = ["git", "-C", str(dest), "pull", "--ff-only", "--depth", "1"]
+        else:
+            print(f"  cloning {t} ({lic}, ~{mb} MB) -> {dest}")
+            cmd = ["git", "clone", "--depth", "1", url, str(dest)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"    failed: {(r.stderr or '').strip()[:160]}", file=sys.stderr)
+            rc = 1
+        else:
+            print(f"    ok - {purpose}")
+    print()
+    return rc
+
+
+def kev_lookup(cve: str) -> dict | None:
+    if not KEV_PATH.is_file():
+        return None
+    try:
+        for v in json.loads(KEV_PATH.read_text()).get("vulnerabilities", []):
+            if v.get("cveID", "").upper() == cve.upper():
+                return v
+    except Exception:                                               # noqa: BLE001
+        return None
+    return None
+
+
+# Aggregate indexes and VCS metadata mention every CVE, so they match everything and
+# tell you nothing. Filter them out or the useful hits drown.
+NOISE = re.compile(
+    r"(^|/)\.git/"                    # VCS metadata
+    r"|/cves\.json$"                  # nuclei's aggregate index - matches every CVE
+    r"|templates-checksum|\.md5$|TEMPLATES-STATS"
+    r"|/\.github/|/README\.md$"
+    r"|trickest-cve/(github|references)\.txt$"   # trickest aggregates - same problem
+    r"|files_exploits\.csv$|files_shellcodes\.csv$"  # exploitdb aggregate indexes
+)
+
+
+def grep_corpus(root: Path, needle: str, limit: int = 12) -> list[str]:
+    """Prefer ripgrep, fall back to grep, then to a python walk."""
+    if not root.is_dir():
+        return []
+    for tool in (["rg", "-l", "--no-messages", "-i", needle, str(root)],
+                 ["grep", "-rl", "-i", needle, str(root)]):
+        if shutil.which(tool[0]):
+            r = subprocess.run(tool, capture_output=True, text=True, timeout=120)
+            hits = [l for l in r.stdout.splitlines() if l and not NOISE.search(l)]
+            return sorted(hits)[:limit]
+    out = []
+    n = needle.lower()
+    for f in root.rglob("*"):
+        if not f.is_file() or f.stat().st_size > 2_000_000:
+            continue
+        if NOISE.search(str(f)):
+            continue
+        try:
+            if n in f.read_text(encoding="utf-8", errors="ignore").lower():
+                out.append(str(f))
+                if len(out) >= limit:
+                    break
+        except Exception:                                           # noqa: BLE001
+            continue
+    return out
+
+
+def cmd_cve(args) -> int:
+    cve = args.cve.upper()
+    if not CVE_RE.fullmatch(cve):
+        print(f"  {args.cve!r} is not a CVE id (expected CVE-YYYY-NNNN)", file=sys.stderr)
+        return 2
+
+    print(f"\n  {cve}\n")
+
+    k = kev_lookup(cve)
+    if k:
+        print("  CISA KEV: LISTED - known exploited in the wild")
+        print(f"    {k.get('vendorProject','')} {k.get('product','')} - {k.get('vulnerabilityName','')}")
+        print(f"    added {k.get('dateAdded','?')} · due {k.get('dueDate','?')}")
+        if k.get("knownRansomwareCampaignUse", "").lower() == "known":
+            print("    used in known ransomware campaigns")
+        if k.get("requiredAction"):
+            print(f"    action: {k['requiredAction'][:110]}")
+    elif KEV_PATH.is_file():
+        print("  CISA KEV: not listed (no confirmed in-the-wild exploitation)")
+    else:
+        print("  CISA KEV: not synced - run `zp-reports sync kev`")
+    print()
+
+    any_corpus = False
+    for name, (_, d, lic, _, purpose) in CORPORA.items():
+        root = REPORTS / d
+        if not root.is_dir():
+            continue
+        any_corpus = True
+        hits = grep_corpus(root, cve, limit=args.limit)
+        label = {"nuclei": "nuclei templates", "exploitdb": "Exploit-DB entries",
+                 "poc": "PoC repositories", "trickest": "PoC index (trickest)"}[name]
+        print(f"  {label}: {len(hits) or 'none'}")
+        for h in hits:
+            print(f"    {Path(h).relative_to(REPORTS)}")
+        print()
+
+    if not any_corpus:
+        print("  no exploit corpora synced yet - run `zp-reports sync all`\n")
+
+    print(f"  references")
+    print(f"    https://nvd.nist.gov/vuln/detail/{cve}")
+    print(f"    https://github.com/search?q={cve}&type=repositories")
+    print()
+    return 0
+
+
+def cmd_find(args) -> int:
+    q = " ".join(args.terms)
+    print(f"\n  searching synced corpora for {q!r}\n")
+    found = False
+    for name, (_, d, _, _, _) in CORPORA.items():
+        root = REPORTS / d
+        if not root.is_dir():
+            continue
+        hits = grep_corpus(root, q, limit=args.limit)
+        if hits:
+            found = True
+            print(f"  {name} ({len(hits)} file(s))")
+            for h in hits:
+                print(f"    {Path(h).relative_to(REPORTS)}")
+            print()
+    h1 = REPORTS / "hackerone"
+    if h1.is_dir():
+        hits = grep_corpus(h1, q, limit=args.limit)
+        if hits:
+            found = True
+            print(f"  cached HackerOne reports ({len(hits)})")
+            for h in hits:
+                print(f"    {Path(h).relative_to(REPORTS)}")
+            print()
+    if not found:
+        print("  nothing found in synced corpora.")
+        print("  `zp-reports status` shows what is synced; `zp-intel search` covers report titles.\n")
+    return 0
+
+
+def cmd_read(args) -> int:
+    """Fetch ONE disclosed report for local reading. Deliberately not a bulk scraper."""
+    ident = args.report.strip().rstrip("/").split("/")[-1]
+    if not ident.isdigit():
+        print(f"  expected a HackerOne report id or URL, got {args.report!r}", file=sys.stderr)
+        return 2
+    out_dir = REPORTS / "hackerone"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{ident}.md"
+    if out.is_file() and not args.force:
+        print(f"  cached: {out}")
+        print(out.read_text(encoding="utf-8")[:1500])
+        return 0
+
+    url = f"https://hackerone.com/reports/{ident}.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ZeroProtocol/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            d = json.loads(r.read())
+    except Exception as e:                                          # noqa: BLE001
+        print(f"  could not fetch report {ident}: {e}", file=sys.stderr)
+        print(f"  read it in a browser: https://hackerone.com/reports/{ident}")
+        return 1
+
+    title = d.get("title", "")
+    body = d.get("vulnerability_information", "") or ""
+    sev = (d.get("severity") or {}).get("rating", "")
+    weak = (d.get("weakness") or {}).get("name", "")
+    team = (d.get("team") or {}).get("handle", "")
+    bounty = d.get("bounty_amount") or ""
+    text = (f"# {title}\n\n"
+            f"- report: https://hackerone.com/reports/{ident}\n"
+            f"- program: {team}\n- weakness: {weak}\n- severity: {sev}\n- bounty: {bounty}\n"
+            f"- disclosed: {d.get('disclosed_at','')}\n\n---\n\n{body}\n")
+    out.write_text(text, encoding="utf-8")
+    print(f"  saved {out}  ({len(text)} bytes)")
+    print(f"  {title}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="zp-reports", description=__doc__.split("\n")[0])
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--limit", type=int, default=12)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("status", parents=[common], help="what is synced").set_defaults(func=cmd_status)
+
+    p = sub.add_parser("sync", parents=[common], help="download a corpus")
+    p.add_argument("what", choices=["all", "kev", *CORPORA])
+    p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser("cve", parents=[common], help="everything known about one CVE")
+    p.add_argument("cve"); p.set_defaults(func=cmd_cve)
+
+    p = sub.add_parser("find", parents=[common], help="free text across synced corpora")
+    p.add_argument("terms", nargs="+"); p.set_defaults(func=cmd_find)
+
+    p = sub.add_parser("read", parents=[common], help="fetch one disclosed report to read")
+    p.add_argument("report"); p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_read)
+
+    args = ap.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)
+    except KeyboardInterrupt:
+        sys.exit(130)

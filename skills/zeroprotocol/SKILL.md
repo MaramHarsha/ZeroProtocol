@@ -198,6 +198,7 @@ Then dispatch in this order:
 | Node/Express/Next/SPA target, JSON merge or clone, query-string-to-object parsing | `zp-proto-pollution` |
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
 | a client-side class needs execution proof, or a route only exists after JS | `zp-browser` |
+| a version banner, dependency manifest, or an edge appliance is fingerprinted | `zp-cve` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
 | LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
 
@@ -360,7 +361,7 @@ seed notes; `zp-memory-seed` copies them in.
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
 **AI systems** - `zp-llm`, `zp-agentic`
-**Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
+**Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
 **Output** - `zp-triage`, `zp-report`
 **Agents** - `zp-recon-sweep`, `zp-surface-probe`, `zp-class-hunter`, `zp-verifier`, `zp-report-drafter` (see Agents above)

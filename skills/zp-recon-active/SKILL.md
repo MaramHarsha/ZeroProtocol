@@ -176,6 +176,6 @@ leaked secret. A 401 on `/api/admin/` outranks a 200 on the marketing site.
 ## Hand off to
 
 Live surface -> `zp-content-discovery` (paths, params) and `zp-js-secrets` (bundles).
-Stack signals -> the dispatch table in `zeroprotocol`.
+Stack signals -> the dispatch table in `zeroprotocol`. Version banners -> `zp-cve`.
 Dangling CNAMEs -> `zp-takeover`. CDN in front -> `zp-cache-poison`, `zp-smuggling`.
 New SANs or netblocks -> back to `zp-scope`.

@@ -23,3 +23,13 @@ out/
 __pycache__/
 *.pyc
 .DS_Store
+
+# reports/ — large exploit corpora are FETCHED, not vendored (zp-reports sync).
+# ~2.5 GB combined; each is one git clone away and better kept current upstream.
+reports/*
+!reports/README.md
+!reports/kev/
+reports/kev/*
+!reports/kev/known_exploited_vulnerabilities.json
+# HackerOne report bodies are their authors' copyrighted work - cached locally, never shipped
+reports/hackerone/
