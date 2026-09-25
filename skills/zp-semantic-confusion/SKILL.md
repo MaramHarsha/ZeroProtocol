@@ -1,6 +1,6 @@
 ---
 name: zp-semantic-confusion
-description: ZeroProtocol hunter for semantic confusion and parser differentials - two components assigning different meaning to one attacker-controlled value. Use when a proxy, WAF, router, framework and sink all read the same URL, path, header, JSON or multipart field, when a validator normalises differently from its sink, when duplicate parameters or unicode folding are in play, or when an internal redirect re-parses a request. The finding is the disagreement plus a security decision taken between the two readings.
+description: ZeroProtocol hunter for semantic confusion and parser differentials - two components assigning different meaning to one attacker-controlled value. Use when a proxy, WAF, router and framework all read the same URL, header, JSON or multipart field, when a validator normalises differently from its sink, when duplicate parameters or unicode folding are in play, or when an internal redirect re-parses a request. The finding is the disagreement plus a security decision taken between the two readings.
 ---
 
 # zp-semantic-confusion - same bytes, two meanings
@@ -26,7 +26,7 @@ a curiosity, and you will file noise.
 **2. Enumerate the consumers.** You need at least two, with a decision between them.
 
 ```bash
-curl -skI "https://$H/" | grep -iE '^(server|via|x-cache|cf-ray|x-powered-by|x-served-by|x-envoy|x-amz-cf-id|x-request-id)'
+curl -skI "https://$H/" | grep -iE '^(server|via|x-cache|cf-ray|x-powered-by|x-served-by|x-envoy)'
 curl -skI "https://$H/" --http1.1 | grep -i '^server'
 curl -skI "https://$H/" --http2   | grep -i '^server'      # different Server = two stacks
 ```
@@ -34,18 +34,8 @@ curl -skI "https://$H/" --http2   | grep -i '^server'      # different Server = 
 Two distinct `Server` values, a `Via`, or an `X-Cache` mean the request is parsed at least twice.
 A single-hop app with no proxy rarely hosts this class - spend your time elsewhere.
 
-**3. Take a clean baseline of one protected and one public route.** You need a known 200 and a
-known 401/403 to measure against, and you need them for *your own* account.
-
-```bash
-P=/admin            # a route that must deny you
-Q=/                 # a route that allows you
-for u in "$P" "$Q"; do
-  printf '%-12s ' "$u"
-  curl -sk --path-as-is -o /tmp/zp.b -w '%{http_code} %{size_download} ' "https://$H$u"
-  md5sum < /tmp/zp.b
-done
-```
+**3. Baseline a route that must deny you and one that allows you** - a known 401/403 and a known
+200, both on *your own* account. Without the denial there is no invariant to break.
 
 **4. Change one axis at a time, and diff on four things** - status, length, body digest, and any
 header that names a handler. One axis per request is the whole discipline; two axes at once and
@@ -57,11 +47,9 @@ probe() {  # $1 = path, sent byte-for-byte
   curl -sk --path-as-is -o /tmp/zp.b -w '%{http_code} %{size_download} %{redirect_url} ' "https://$H$1"
   md5sum < /tmp/zp.b
 }
-for v in "/admin" "/Admin" "/ADMIN" "/%61dmin" "/%2561dmin" "/admin/" "/admin/." "/admin;x=1" \
-         "//admin" "/./admin" "/static/../admin" "/static/..%2fadmin" "/static/..%5cadmin" \
-         "/%2e%2e/admin" "/admin%09" "/admin%20" "/admin%00" "/admin%0a" "/admin.json" "/admin?"; do
-  probe "$v"
-done
+for v in "/admin" "/Admin" "/%61dmin" "/%2561dmin" "/admin/" "/admin;x=1" "//admin" "/./admin" \
+         "/static/../admin" "/static/..%2fadmin" "/static/..%5cadmin" "/%2e%2e/admin" \
+         "/admin%09" "/admin%00" "/admin%0a" "/admin.json"; do probe "$v"; done
 ```
 
 `--path-as-is` is mandatory here - without it curl collapses `..` and `//` itself and you test
@@ -94,8 +82,8 @@ ZeroProtocol entirely.
 for is a check on value A followed by a sink on `transform(A)`.
 
 ```bash
-grep -rnE 'startsWith|startswith|indexOf|\.includes\(|hasPrefix|LIKE ' --include='*.js' --include='*.py' --include='*.go' --include='*.java' . | head -40
-grep -rnE 'unquote|urldecode|decodeURIComponent|normalize\(|NFKC|casefold|toLowerCase|realpath|Path\.resolve' -r . | head -40
+grep -rnE 'startsWith|startswith|indexOf|\.includes\(|hasPrefix' . | head -40
+grep -rnE 'unquote|urldecode|decodeURIComponent|normalize\(|NFKC|casefold|toLowerCase|realpath' . | head -40
 ```
 
 A prefix allowlist plus a later decode is the highest-yield pair in this whole class. Two
@@ -121,7 +109,6 @@ unlocked, do not read another user's data - name the capability and hand off.
 | `/admin;x=1` | Spring/Tomcat path parameters stripped post-routing | proxy allows, app serves `/admin` |
 | `/admin.json`, `/admin.css` | extension-keyed cache or suffix router | static-style caching of a private page |
 | `/admin%00`, `/admin%0a` | truncation in one parser only | 200 where `/admin` was 403 |
-| `//admin`, `/./admin` | empty-segment normalisation mismatch | ACL miss, app hit |
 | `/api/publicish` vs `/api/public/` | prefix allowlist with no segment awareness | sibling route inherits the allow |
 | `http://$H@evil.tld/`, `https://evil.tld\@$H/` | userinfo vs host split across two URL parsers | validator sees `$H`, fetcher sees `evil.tld` |
 | `http://2130706433/`, `http://0x7f000001/` | integer/hex host forms one parser resolves | SSRF allowlist bypass -> `zp-ssrf` |
@@ -144,8 +131,8 @@ PY
 | `%EF%BC%87` FULLWIDTH APOSTROPHE | `'` | quote reaching a query builder past a char filter |
 | `%EF%BC%8F` / `%E2%88%95` | `/` | a segment delimiter created after path validation |
 | `%C5%BF` LATIN LONG S | uppercases to `S` | an uppercasing identity check matching `ADMIN` |
-| `%C4%B0` DOTTED CAPITAL I | lowercases to `i` plus a mark | username/email identity collision |
-| `%C2%AD` SOFT HYPHEN | stripped by some IDNA paths | host allowlist bypass |
+| `%C4%B0` DOTTED CAPITAL I | lowercases to `i` + a mark | username/email identity collision |
+| `%C2%AD` SOFT HYPHEN | stripped on some IDNA paths | host allowlist bypass |
 
 **Overloaded and duplicated fields** - the same key read twice, differently.
 
@@ -155,7 +142,7 @@ PY
 | `?id[]=1&id[]=2`, `?id[]=1&id=2` | array coercion; a scalar check on an array value |
 | `?a=1%26b=2` vs `?a=1&b=2` | who decodes before splitting |
 | `{"role":"user","role":"admin"}` | duplicate JSON keys - most parsers keep the last |
-| `{"role":"admin"}` | escaped key seen by the sink parser, missed by a string filter |
+| a JSON key written with a `\u0072` escape | the sink parser resolves it, a string filter misses it |
 | `{"id":"1 "}`, `{"id":1}`, `{"id":[1]}` | type coercion between validator and query layer |
 | `Content-Type: application/json; charset=utf-16` with a UTF-16 body | a WAF decoding UTF-8 sees noise, the framework sees the payload |
 | same JSON body sent as `text/plain` or `application/x-www-form-urlencoded` | a body parser that a content-type-gated filter skips |
@@ -167,9 +154,8 @@ PY
 
 ```bash
 for h in "X-Original-URL: /admin" "X-Rewrite-URL: /admin" "X-Forwarded-Uri: /admin" \
-         "X-HTTP-Method-Override: PUT" "X-Original-Method: PUT"; do
-  printf '%-34s ' "${h%%:*}"
-  curl -sk -o /dev/null -w '%{http_code}\n' "https://$H/" -H "$h"
+         "X-HTTP-Method-Override: PUT"; do
+  printf '%-30s ' "${h%%:*}"; curl -sk -o /dev/null -w '%{http_code}\n' "https://$H/" -H "$h"
 done
 ```
 
@@ -193,10 +179,10 @@ THE section. Most of this class dies here, and it should.
 | URL validator resolved `$H`, the fetcher resolved your host (OAST hit) | confirmed -> `zp-ssrf` |
 | duplicate key where the WAF sees value 1 and the app uses value 2, **and the app rejects the payload anyway** | **WAF bypass only. Not a vulnerability.** Informational at best. Killed |
 | status differs (403 vs 404 vs 400) but no protected resource is reached and no sink acts | **killed.** A parser is lenient; nothing disagreed about meaning |
-| the app echoes `K` for KELVIN SIGN but every filter runs post-normalisation | normalisation confirmed, exploitation not. Keep the note, file nothing |
-| normalisation difference visible only in access logs | log inconsistency, not a finding. Killed - unless the log *is* the control (rate limit, audit ACL) |
-| duplicate parameter produces an array and the code reads index 0 everywhere | consistent meaning. Killed |
-| variant reaches a route that returns the **same public content** as the baseline | killed. No decision was crossed |
+| the app echoes `K` for KELVIN SIGN but every filter runs post-normalisation | normalisation confirmed, exploitation not. Note it, file nothing |
+| normalisation difference visible only in access logs | not a finding. Killed - unless the log *is* the control (rate limit, audit ACL) |
+| duplicate parameter yields an array and the code reads index 0 everywhere | consistent meaning. Killed |
+| the variant reaches a route returning the **same public content** as baseline | killed. No decision was crossed |
 | the differential only reproduces once in five tries | not confirmed. Re-run paired control and exploit five times before writing anything |
 | behaviour you read about in a CVE for version X, with the deployed version untested | **killed until reproduced here.** Version-specific claimed as universal is the classic bogus report |
 | a `/admin` that is 200 for everyone | not protected. There was never an invariant to break |
@@ -213,9 +199,9 @@ double-decode into an endpoint that returns a public changelog is a Low, and usu
 - **Gateway authorising on the visible path while the app re-routes on `X-Original-URL`** - full admin surface, one header.
 - **An SSRF allowlist comparing hostname strings before a fetcher re-parses the URL** - userinfo, backslash and integer-host forms.
 - **Upload pipelines where an antivirus or MIME sniffer reads one field and the storer reads another** - `filename*` versus `filename`.
-- **Identity systems that case-fold or NFKC-normalise emails after a uniqueness check** - account collision, which is `zp-authz` impact.
-- **A JSON body parsed twice - once by a schema validator, once by the ORM** - duplicate keys and type coercion.
-- **Anything with two protocol versions on the path (HTTP/2 edge, HTTP/1.1 origin)** - real, and it belongs to `zp-smuggling`.
+- **Identity systems that case-fold or NFKC-normalise emails after the uniqueness check** - account collision, `zp-authz` impact.
+- **A JSON body parsed twice, once by a schema validator and once by the ORM** - duplicate keys and type coercion.
+- **Two protocol versions on the path (HTTP/2 edge, HTTP/1.1 origin)** - real, and it belongs to `zp-smuggling`.
 
 ---
 
@@ -226,25 +212,25 @@ double-decode into an endpoint that returns a public changelog is a Low, and usu
 - **Filing a WAF bypass as a vulnerability** when the application rejects the payload identically. This is the most common junk report in the class.
 - **Filing a status-code difference** with no protected resource and no sink behind it.
 - **Sending malformed framing, oversized bodies or delayed bodies at a live target.** That is a stability risk, not a probe - `zp-smuggling`'s gate exists for a reason, and crash testing is never in scope.
-- **Fuzzing breadth instead of depth.** A generator pointed at a live host is a scanner. Build a bounded matrix from axes the stack actually has.
+- **Fuzzing breadth instead of depth.** A generator pointed at a live host is a scanner; build a bounded matrix from the axes the stack actually has.
 - **Pivoting after the primitive lands** - enumerating files, reading other tenants' records, invoking the handler you unlocked. Stop at the paired proof.
 - **Claiming a CVE's behaviour** without reproducing it on the deployed version and configuration.
-- **Copying the final payload into the report instead of naming the boundary.** The fix targets the disagreement; a string list gets patched and the bug survives.
-- **Testing origin IPs or alternate hosts you found mid-run** without re-running `zp-scope check` on each one.
+- **Copying the payload into the report instead of naming the boundary.** A string list gets patched and the bug survives.
+- **Testing origin IPs or alternate hosts found mid-run** without re-running `zp-scope check` on each one.
 
 ---
 
 ## Hand off to
 
-Cache-key versus origin-path divergence -> `zp-cache-poison`. Protocol or framing differentials,
-HTTP/2 downgrade -> `zp-smuggling`. URL-parser splits that reach a fetcher -> `zp-ssrf`.
-Path confusion landing in file IO -> `zp-xxe-lfi`. Detector/consumer mismatch on uploads ->
-`zp-upload`. Reached routes and identity collisions -> `zp-authz`, `zp-idor`. Type coercion into
-a datastore or template -> `zp-sqli`, `zp-rce-ssti`, `zp-proto-pollution`. Duplicate or
-overloaded fields in an API or schema -> `zp-api`, `zp-graphql`. Browser-side decode into a DOM
-sink -> `zp-xss`; origin-string comparison -> `zp-cors`. Token and claim parsing ->
-`zp-jwt-oauth`. Order-dependent lifecycle drift -> `zp-race`, `zp-business-logic`.
-Source-level validator/sink pairs -> `zp-code-audit`. Raw-byte capture and replay -> `zp-proxy`,
-`zp-toolchain`. Confirmed -> `zp-triage`, then `zp-report` with both readings and the negative control.
+Cache-key versus origin-path divergence -> `zp-cache-poison`. Framing or HTTP/2-downgrade
+differentials -> `zp-smuggling`. URL splits reaching a fetcher -> `zp-ssrf`; landing in file IO ->
+`zp-xxe-lfi`. Detector/consumer mismatch on uploads -> `zp-upload`. Reached routes and identity
+collisions -> `zp-authz`, `zp-idor`. Type coercion into a datastore, template or object graph ->
+`zp-sqli`, `zp-rce-ssti`, `zp-proto-pollution`. Overloaded fields in an API or schema ->
+`zp-api`, `zp-graphql`. Browser-side decode into a DOM sink -> `zp-xss`; origin-string comparison
+-> `zp-cors`. Token and claim parsing -> `zp-jwt-oauth`. Order-dependent lifecycle drift ->
+`zp-race`, `zp-business-logic`. Source-level validator/sink pairs -> `zp-code-audit`. Raw-byte
+capture and replay -> `zp-proxy`, `zp-toolchain`.
+Confirmed -> `zp-triage`, then `zp-report` with both readings and the negative control.
 
 Class reference cross-checked against `usestrix/strix` (Apache-2.0) `semantic_confusion`.

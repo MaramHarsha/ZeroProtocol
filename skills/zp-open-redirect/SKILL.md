@@ -9,11 +9,10 @@ description: ZeroProtocol hunter for open redirect and unvalidated forwards. Use
 Exit 1 refuse and name the pattern · 3 stop · 4 stop.
 
 An open redirect is a **feeder**, not a finding. Of the ~275 most-upvoted open-redirect reports on
-HackerOne, 217 paid nothing - they were filed as standalone phishing vectors. The ones that paid
-were chained: XSS through a `javascript:` sink, an OAuth code delivered to the reporter's own host,
-a CRLF split, or a host-header redirect that rewrote password-reset mail. **Find the redirect in
-ten minutes, then spend your time on the second hop.** The bar for filing alone is a program that
-explicitly pays for it.
+HackerOne, 217 paid nothing - filed as standalone phishing vectors. The ones that paid were chained:
+a `javascript:` sink, an OAuth code delivered to the reporter's own host, a CRLF split, a host-header
+redirect that rewrote reset mail. **Find the redirect in ten minutes, then spend your time on the
+second hop.** Filing it alone is justified only where the program says it pays for it.
 
 ---
 
@@ -27,11 +26,11 @@ grep -hoE "[?&]($PARAMS)=[^&\"'[:space:]]*" surface/urls.txt js/*.js 2>/dev/null
 grep -rnE "location\.(href|assign|replace)|window\.open\(|router\.(push|replace)\(|http-equiv=[\"']refresh" js/ 2>/dev/null
 ```
 
-Path-shaped redirectors matter as much as parameters - `/out/<url>`, `/r/<url>`, `/redirect/<url>`,
-`/link?u=`. Feed those patterns to `zp-content-discovery` if you have no URL corpus yet.
+Path-shaped redirectors count too - `/out/<url>`, `/r/<url>`, `/redirect/<url>`, `/link?u=`. With no
+URL corpus yet, feed those patterns to `zp-content-discovery`.
 
-**2. Baseline the endpoint with a value that is *supposed* to work.** If a legitimate relative
-path does not appear in `Location`, the parameter does not drive the redirect and the rest is noise.
+**2. Baseline with a value that is *supposed* to work.** If a legitimate relative path never reaches
+`Location`, the parameter does not drive the redirect and the rest is noise.
 
 ```bash
 H=target.tld; EP="https://$H/login"; P=next
@@ -55,9 +54,8 @@ for p in "https://$OOB" "//$OOB" "https:$OOB" "https:/$OOB" "////$OOB" "/\\$OOB"
 done
 ```
 
-Any `Location` whose **authority** is `$OOB` is a hit. Read the authority, not the string: a
-`Location` of `https://target.tld/x?u=https://zp91234.canary.example` contains your host and goes
-nowhere near it.
+Any `Location` whose **authority** is `$OOB` is a hit. Read the authority, not the string -
+`Location: https://target.tld/x?u=https://$OOB` contains your host and goes nowhere near it.
 
 **4. Classify it - server-side or client-side.** They have different ceilings.
 
@@ -73,8 +71,8 @@ curl -sk --max-time 15 "$EP?$P=https://$OOB" \
 | `200` + `location.href = <param>` | client-side DOM | phishing, and **XSS** if a `javascript:`/`data:` scheme survives |
 | `Location` with your host only in the query string | nothing | killed |
 
-**5. Let a URL parser adjudicate, then a browser.** Every bypass on the ladder is a disagreement
-between the validator's parser and the navigator's parser. Make the disagreement visible.
+**5. Let a URL parser adjudicate, then a browser.** Every rung of the ladder is a disagreement
+between the validator's parser and the navigator's. Make it visible.
 
 ```bash
 python3 - <<'EOF'
@@ -87,24 +85,23 @@ for c in ["//evil.tld", "/\\evil.tld", "https:evil.tld", "https://target.tld@evi
 EOF
 ```
 
-`stdlib_host=''` on a payload a browser sends to `evil.tld` is the bug in one line - that is exactly
-what a `startswith("/")` or `urlsplit(...).netloc in ALLOWED` check gets wrong.
+`stdlib_host=''` on a payload a browser sends to `evil.tld` is the bug in one line - exactly what a
+`startswith("/")` or `urlsplit(...).netloc in ALLOWED` check gets wrong.
 
-A browser is the only authority on where navigation actually lands. Prove it by serving a unique
-marker on your own host and confirming the marker renders:
+The browser is the only authority on where navigation lands. Serve a unique marker on your own host
+and confirm it renders:
 
 ```bash
-# text browser - witnesses 3xx chains only, no JS
+# text browser or curl -L - witnesses 3xx chains only, no JS
 lynx -dump "$EP?$P=//$OOB" 2>/dev/null | head -5 || curl -skL --max-time 20 "$EP?$P=//$OOB" | head -c 200
-# real engine - needed for meta refresh and location.href
+# real engine - required for meta refresh and location.href
 chromium --headless --disable-gpu --no-sandbox --virtual-time-budget=8000 \
   --dump-dom "$EP?$P=//$OOB" 2>/dev/null | grep -o 'ZP-CANARY-91234'
 ```
 
 No local engine? `vercel-labs/agent-browser` and `browsh` both drive a real engine from a terminal -
-navigate to the URL and read the final address bar and page. Whatever the driver, the proof artifact
-is the same: **your own hostname in the address bar with your marker on screen, reached from a link
-that starts with the target's domain.** Screenshot that.
+navigate and read the final address bar. The artifact is the same either way: **your hostname in the
+address bar with your marker on screen, from a link that starts with the target's domain.**
 
 **6. Header-driven redirects.** The target still has to be the peer, so pin the connection.
 
@@ -119,8 +116,8 @@ done
 curl -sk -o /dev/null -D - --max-time 15 --resolve "$OOB:443:$IP" "https://$OOB/login" | grep -i '^location:'
 ```
 
-A `Location` built from `Host`/`X-Forwarded-Host` is worth far more than a parameter redirect: the
-same code usually builds password-reset links, so hand it to `zp-jwt-oauth` and `zp-cache-poison`.
+A `Location` built from `Host`/`X-Forwarded-Host` beats any parameter redirect - the same code
+usually builds password-reset links. Hand it to `zp-jwt-oauth` and `zp-cache-poison`.
 
 **7. Build the second hop - this is the whole job.**
 
@@ -136,10 +133,9 @@ same code usually builds password-reset links, so hand it to `zp-jwt-oauth` and 
 | Allowed host you can claim | `//sub.$H` where `sub` is a dangling CNAME | `zp-takeover` |
 
 **8. Stop point for this class - state it in the report.** You stop at the `Location` header, or at
-your own marker page in a real browser. You do **not** send the link to anybody, host a page that
-imitates the target's login, capture a code or token belonging to another account, or complete a
-token exchange with a code that is not yours. The OAuth chain is proven with **your own two
-accounts** and your own canary host. Anything beyond that is the attack, not the proof.
+your own marker page in a real browser. You do **not** send the link to anyone, host a page imitating
+the target's login, capture a code or token belonging to another account, or exchange a code that is
+not yours. The OAuth chain is proven with **two accounts you own** and your own canary host.
 
 ---
 
@@ -162,10 +158,9 @@ accounts** and your own canary host. Anything beyond that is the attack, not the
 | `javascript:/*--></script><svg onload=…>`, `data:text/html;base64,…` | scheme allow-list absent | script executes - this is `zp-xss` |
 | `2130706433`, `0177.0.0.1`, `[::ffff:127.0.0.1]` | numeric-IP forms in an SSRF-adjacent fetcher | internal host reached - hand to `zp-ssrf` |
 
-Optional tooling, if present: `nuclei -l candidates.txt -tags redirect -severity medium,high`, or
-`openredirex -l candidates.txt -p payloads.txt`. Neither is required - the loop in step 3 is the
-whole technique, and a tool that silently matches on substrings will report the false positive in
-the next section.
+Optional tooling if present - `nuclei -l candidates.txt -tags redirect -severity medium,high`, or
+`openredirex -l candidates.txt -p payloads.txt`. Neither is required; the loop in step 3 is the whole
+technique, and a substring-matching tool reports the first false positive in the next section.
 
 ---
 
@@ -188,10 +183,9 @@ the next section.
 | a scanner said "vulnerable" and you have no `Location` line of your own | unverified. Killed until you reproduce it by hand |
 | program rules list open redirect as out of scope or informational | killed as a standalone; **still worth building the chain** and filing that instead |
 
-Two honest severity notes. First, a `meta refresh` or `location.href` redirect cannot be followed by
-a server-side fetcher, so it does not chain to SSRF - say so rather than implying it does. Second,
-"phishing is now possible" is not impact a triager will accept; describe the concrete asset the
-second hop takes.
+Two honest severity notes. A `meta refresh` or `location.href` redirect cannot be followed by a
+server-side fetcher, so it does **not** chain to SSRF - say so rather than implying otherwise. And
+"phishing is now possible" is not impact; name the asset the second hop takes.
 
 ---
 
@@ -202,8 +196,8 @@ second hop takes.
 - **An open redirect on a host that is a registered OAuth callback** - turns exact-match `redirect_uri` validation into code interception. The single highest-value shape in this class.
 - **Password-reset and email-verification links** carrying both a token and a redirect parameter - Referer leakage gives token theft with no phishing at all.
 - **A redirect built from the `Host` header** - the same builder usually writes reset emails and absolute asset URLs.
-- **A fix that added path normalisation** - re-test `/..//`, `/%2f%2f`, `%252f` against every redirect the program has already patched; the bypass-of-the-fix report is a fresh finding.
-- **Unanchored regex domain validation** (`if "target.com" in host`) - `target.com.attacker.tld` and one-click ATO.
+- **A previous fix for this exact bug** - re-test `/..//`, `/%2f%2f`, `%252f` against every redirect the program already patched; a bypass-of-the-fix is a fresh finding.
+- **Unanchored regex domain validation** (`if "target.com" in host`) - `target.com.attacker.tld`, one-click ATO.
 - **Non-Latin and homoglyph authorities** (U+3002 ideographic full stop, trailing dot, punycode) - beat validators and link-blockers that normalise differently from the browser.
 - **Link unfurlers, image proxies and PDF renderers** that follow 3xx - an allow-listed first hop is the entire SSRF filter bypass.
 - **Mobile deep links and QR handlers** that accept a URL - hand to `zp-mobile`; app-link hijack is a much larger finding.
@@ -215,14 +209,14 @@ second hop takes.
 - **Filing it standalone.** Four in five of the top-voted reports in this class paid zero. Chain first.
 - **Reading the string instead of the authority.** Your host in a query parameter is not a redirect.
 - **Trusting `curl` to be the witness for a client-side redirect.** `curl` ignores `meta refresh` and JavaScript; the browser decides.
-- **Letting the shell or curl re-encode a payload.** A `#` sent literally never leaves your machine, and `--data-urlencode` will double-encode the very payloads that test double decoding.
+- **Letting curl re-encode a payload.** A literal `#` never leaves your machine, and `--data-urlencode` double-encodes the very payloads that test double decoding.
 - **Calling a `javascript:` sink an open redirect.** It is XSS; the severity and the fix are different.
 - **Claiming SSRF from a `meta refresh`.** No server follows it.
-- **Redirecting anything at a live third party.** Point every payload at a canary host you own - never at a real `evil.tld`, a competitor, or another program's asset.
-- **Sending the crafted link to a real user, or serving a login clone.** That is phishing. ZeroProtocol stops at the marker page.
+- **Pointing a payload at a live third party.** Use a canary host you own - never a real `evil.tld`, a competitor, or another program's asset.
+- **Sending the crafted link to a real user, or serving a login clone.** That is phishing; stop at the marker page.
 - **Touching another account's OAuth `code`.** Two accounts you own, or no chain.
-- **Mass-fuzzing every parameter on every URL.** Pick the login, logout, OAuth and reset flows; the ladder is 20 requests per endpoint, not thousands.
-- **Testing a redirect hosted on an out-of-scope or vendor domain** because it appeared in the target's HTML.
+- **Mass-fuzzing every parameter on every URL.** The ladder is ~20 requests per endpoint; pick login, logout, OAuth and reset.
+- **Testing a redirector on an out-of-scope or vendor domain** because it appeared in the target's HTML.
 - **Reporting without naming the parser differential.** "The validator uses `startswith`, the browser uses WHATWG" is what gets the bug fixed and the report accepted.
 
 ---

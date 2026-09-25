@@ -186,6 +186,8 @@ Then dispatch in this order:
 | `/graphql`, `__schema`, Apollo | `zp-graphql` |
 | any `Access-Control-Allow-*` header | `zp-cors` |
 | dangling CNAME, vendor 404, unclaimed bucket | `zp-takeover` |
+| a URL-valued parameter that redirects (next, returnTo, callback, dest) | `zp-open-redirect` |
+| two components read the same value - parser, normalizer, validator vs sink | `zp-semantic-confusion` |
 | cloud metadata reachable, bucket URLs, IAM artifacts | `zp-cloud` |
 | an APK/IPA in scope | `zp-mobile` |
 | a contract address or chain asset in scope | `zp-web3` |
@@ -354,8 +356,8 @@ seed notes; `zp-memory-seed` copies them in.
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`
-**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`
-**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`
+**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
+**Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
