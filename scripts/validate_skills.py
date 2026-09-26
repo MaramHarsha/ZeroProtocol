@@ -143,7 +143,10 @@ def main() -> int:
             if len(desc) > MAX_DESC:
                 warns.append(f"{rel}: description is {len(desc)} chars, over {MAX_DESC}")
             low = desc.lower()
-            if not any(w in low for w in ("use when", "use whenever", "fires", "use for")):
+            # "Use before ...", "Use at ...", "Use to ..." are all valid trigger phrasings;
+            # matching only "use when" flagged good descriptions as bad.
+            if not any(w in low for w in ("use when", "use whenever", "use before", "use at",
+                                          "use to", "use for", "use after", "fires")):
                 warns.append(f"{rel}: description never says WHEN to use it")
             if name != ROUTER and "zeroprotocol" not in low:
                 warns.append(f"{rel}: description does not mention ZeroProtocol")
