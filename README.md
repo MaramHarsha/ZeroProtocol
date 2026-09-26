@@ -4,8 +4,8 @@
 
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **36 Claude Code skills**,
-**5 agents** and four helper programs. Clone it, ask Claude to check it, give it a target.
+One protocol for authorized bug-bounty and web-security work, as **67 Claude Code skills**,
+**5 agents**, **15 slash commands** and six helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
 `zp-scope check` and obeys the exit code, so an out-of-scope host is refused mechanically rather
@@ -51,7 +51,7 @@ up anything it would displace, and `./install.sh --remove` undoes all of it.
 Or just open Claude Code in this directory and say **"check this"** — `CLAUDE.md` tells Claude
 what to do.
 
-## The 36 skills
+## The 67 skills
 
 | | |
 |---|---|

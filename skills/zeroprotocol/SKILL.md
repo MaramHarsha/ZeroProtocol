@@ -184,12 +184,15 @@ Then dispatch in this order:
 | CDN or reverse proxy in front (`cf-ray`, `x-cache`, `via`) | `zp-smuggling`, `zp-cache-poison` |
 | HTTPS in scope and certificate, protocol or HSTS behaviour matters | `zp-tls` |
 | coupons, balances, limits, invites, concurrent state | `zp-race` |
+| behaviour off the happy path - boundaries, wrong types, partial or replayed requests | `zp-exceptional` |
 | `/api/`, Swagger, OpenAPI, versioned routes | `zp-api` |
 | `/graphql`, `__schema`, Apollo | `zp-graphql` |
 | gRPC, protobuf, server reflection, or a gRPC-Web/JSON transcoding gateway | `zp-grpc` |
 | any `Access-Control-Allow-*` header | `zp-cors` |
 | a state-changing request whose only protection is a token or a cookie | `zp-csrf` |
 | login, logout, cookie attributes, timeout or concurrent-session behaviour | `zp-session` |
+| a CAPTCHA or anti-automation challenge on login, signup, reset or OTP | `zp-captcha` |
+| a sensitive endpoint (login, OTP, reset, invite, anything billed) with no visible throttling | `zp-rate-limit` |
 | dangling CNAME, vendor 404, unclaimed bucket | `zp-takeover` |
 | a URL-valued parameter that redirects (next, returnTo, callback, dest) | `zp-open-redirect` |
 | two components read the same value - parser, normalizer, validator vs sink | `zp-semantic-confusion` |
@@ -202,6 +205,7 @@ Then dispatch in this order:
 | Next.js, `__NEXT_DATA__`, RSC payloads or Server Actions | `zp-nextjs` |
 | Express or Node backend, `X-Powered-By: Express` | `zp-nodejs` |
 | Spring Boot, `/actuator`, `JSESSIONID` | `zp-springboot` |
+| SharePoint on-prem or Online, `_vti_`, `_layouts`, `_api` | `zp-sharepoint` |
 | Laravel or PHP, `laravel_session`, Ignition error page | `zp-laravel` |
 | ASP.NET or IIS, `__VIEWSTATE`, `X-AspNet-Version` | `zp-aspnet` |
 | exposed kubelet, API server, dashboard or ingress | `zp-k8s` |
@@ -371,11 +375,11 @@ seed notes; `zp-memory-seed` copies them in.
 **Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`, `zp-tls`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`, `zp-ldap-xpath`
-**Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`, `zp-session`, `zp-csrf`
-**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
+**Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`, `zp-session`, `zp-csrf`, `zp-captcha`, `zp-rate-limit`
+**Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`, `zp-exceptional`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`, `zp-grpc`
 **Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`, `zp-cicd`, `zp-k8s`
-**Frameworks** - `zp-nextjs`, `zp-nodejs`, `zp-springboot`, `zp-laravel`, `zp-aspnet`
+**Frameworks** - `zp-nextjs`, `zp-nodejs`, `zp-springboot`, `zp-laravel`, `zp-aspnet`, `zp-sharepoint`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)
