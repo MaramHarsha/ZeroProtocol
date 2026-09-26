@@ -182,6 +182,7 @@ Then dispatch in this order:
 | JWT, OAuth callback, SAML, SSO, reset token | `zp-jwt-oauth` |
 | URL-valued parameter, webhook, importer, PDF/screenshot renderer | `zp-ssrf` |
 | CDN or reverse proxy in front (`cf-ray`, `x-cache`, `via`) | `zp-smuggling`, `zp-cache-poison` |
+| HTTPS in scope and certificate, protocol or HSTS behaviour matters | `zp-tls` |
 | coupons, balances, limits, invites, concurrent state | `zp-race` |
 | `/api/`, Swagger, OpenAPI, versioned routes | `zp-api` |
 | `/graphql`, `__schema`, Apollo | `zp-graphql` |
@@ -198,6 +199,12 @@ Then dispatch in this order:
 | an APK/IPA in scope | `zp-mobile` |
 | a contract address or chain asset in scope | `zp-web3` |
 | source in hand | `zp-code-audit` |
+| Next.js, `__NEXT_DATA__`, RSC payloads or Server Actions | `zp-nextjs` |
+| Express or Node backend, `X-Powered-By: Express` | `zp-nodejs` |
+| Spring Boot, `/actuator`, `JSESSIONID` | `zp-springboot` |
+| Laravel or PHP, `laravel_session`, Ignition error page | `zp-laravel` |
+| ASP.NET or IIS, `__VIEWSTATE`, `X-AspNet-Version` | `zp-aspnet` |
+| exposed kubelet, API server, dashboard or ingress | `zp-k8s` |
 | exposed CI config, build logs, GitHub Actions workflows, or a package registry namespace | `zp-cicd` |
 | chatbot, AI assistant, AI search, summarise/translate feature, RAG pipeline | `zp-llm` |
 | the AI can call tools, install plugins/MCP servers, keep memory, or delegate | `zp-agentic` |
@@ -362,12 +369,13 @@ seed notes; `zp-memory-seed` copies them in.
 ## Skill index
 
 **Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
-**Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`
+**Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`, `zp-tls`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`, `zp-ldap-xpath`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`, `zp-session`, `zp-csrf`
 **Server-side logic** - `zp-ssrf`, `zp-smuggling`, `zp-cache-poison`, `zp-race`, `zp-business-logic`, `zp-semantic-confusion`
 **Interfaces** - `zp-api`, `zp-graphql`, `zp-cors`, `zp-open-redirect`, `zp-websocket`, `zp-grpc`
-**Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`, `zp-cicd`
+**Platforms** - `zp-cloud`, `zp-mobile`, `zp-web3`, `zp-code-audit`, `zp-cicd`, `zp-k8s`
+**Frameworks** - `zp-nextjs`, `zp-nodejs`, `zp-springboot`, `zp-laravel`, `zp-aspnet`
 **AI systems** - `zp-llm`, `zp-agentic`
 **Known CVEs** - `zp-cve` (the general sweep), `zp-cve-2026-41940` (cPanel/WHM pre-auth bypass), `zp-cve-lightrag` (three
 LightRAG advisories: CORS-with-credentials, non-constant-time password compare, unthrottled login)

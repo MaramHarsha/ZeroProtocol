@@ -1,6 +1,6 @@
 ---
 name: zp-cors
-description: ZeroProtocol hunter for CORS misconfiguration, cross-origin data theft and related client-side trust failures including postMessage, clickjacking and CSRF. Use when any Access-Control-Allow-* header appears, when testing whether another origin can read authenticated responses, when checking origin reflection or null origin, when auditing a postMessage handler, or when evaluating CSRF protection. A permissive CORS header is only a finding when it exposes data that a session actually protects.
+description: ZeroProtocol hunter for CORS misconfiguration, cross-origin data theft and related client-side trust failures including postMessage and clickjacking. Use when any Access-Control-Allow-* header appears, when testing whether another origin can read authenticated responses, when checking origin reflection or null origin, when auditing a postMessage handler, or when evaluating framing protection. A permissive CORS header is only a finding when it exposes data that a session actually protects. Forged state-changing requests are zp-csrf.
 ---
 
 # zp-cors - who else can read this
@@ -110,21 +110,13 @@ grep -nE 'postMessage\([^,]+,\s*["'\'']\*["'\'']' js/*.js      # sending to * le
 The handler's sink decides severity: `innerHTML` is XSS (`zp-xss`), `location=` is open redirect,
 a token echoed back is credential theft.
 
-**6. CSRF - check what actually protects the state-changing request.**
+**6. CSRF is `zp-csrf`.** This skill is about what another origin can *read*; forging a
+state-changing request is a different question with a different bar (the `SameSite` attribute
+decides most of it before any payload). One check belongs here because it is the same header dump:
 
 ```bash
-# does it work with the token removed?
-curl -sk -X POST "https://$H/api/settings" -H "Cookie: session=$TOK_A" \
-  -H 'Content-Type: application/json' -d '{"email":"zp@example.com"}' -o /dev/null -w '%{http_code}\n'
-# and as a simple, form-encodable request (no preflight, so a cross-site form works)?
-curl -sk -X POST "https://$H/api/settings" -H "Cookie: session=$TOK_A" \
-  -H 'Content-Type: application/x-www-form-urlencoded' -d 'email=zp@example.com' -o /dev/null -w '%{http_code}\n'
-curl -skI "https://$H/" | grep -io 'samesite=[a-z]*'
+curl -skI "https://$H/" | grep -io 'samesite=[a-z]*'   # None or absent -> hand to zp-csrf
 ```
-
-Modern `SameSite=Lax` defaults kill most classic CSRF. A real CSRF finding today usually needs:
-a `SameSite=None` cookie, or a `GET`-based state change, or a form-encodable POST with no token,
-or a token that is not actually validated. Check `SameSite` before you write the report.
 
 **7. Clickjacking** - only report it with a real, sensitive action behind it.
 
@@ -151,7 +143,7 @@ page showing the overlay.
 | allowed subdomain you can control | confirmed **as a chain** with takeover or XSS there |
 | preflight allows `PUT`/`DELETE` from any origin | confirmed cross-origin write. Higher than read |
 | `message` handler with no origin check and a dangerous sink | confirmed. Severity from the sink |
-| CSRF with `SameSite=Lax` and a JSON-only endpoint | almost certainly killed. Verify before claiming |
+| a state-changing request with no origin check | not this skill - hand to `zp-csrf` |
 | clickjacking on a page with no sensitive action | killed |
 
 ---
@@ -175,7 +167,7 @@ page showing the overlay.
 - **Not checking whether the data is private.** Compare anonymous and authenticated first.
 - **A curl header dump as the PoC.** Browsers enforce CORS; show a browser.
 - **Reading a real user's data** in your PoC. Your own account, always.
-- **Ignoring `SameSite`** and filing a CSRF that cannot happen.
+- **Filing a CSRF report from here.** `zp-csrf` owns that class and checks `SameSite` first.
 - **Clickjacking reports on static pages.**
 - **Missing the preflight** and therefore missing cross-origin writes.
 - **Not testing the suffix/prefix origin variants** - those are the bugs, not the literal `evil.tld`.
@@ -186,5 +178,5 @@ page showing the overlay.
 
 Confirmed data theft -> `zp-triage`, `zp-report` with the browser PoC.
 `postMessage` sinks -> `zp-xss`. Allowed subdomain -> `zp-takeover`.
-Cross-origin writes -> `zp-authz`, `zp-idor`. Cacheable CORS responses -> `zp-cache-poison`.
+Cross-origin writes -> `zp-csrf`, `zp-authz`, `zp-idor`. Cacheable CORS responses -> `zp-cache-poison`.
 Token handling -> `zp-jwt-oauth`.
