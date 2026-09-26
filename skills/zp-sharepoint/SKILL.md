@@ -70,8 +70,11 @@ curl -sk "https://$H/_layouts/15/ToolPane.aspx?DisplayMode=Edit" \
 ```
 
 Three questions. Does an **anonymous** request receive a `__REQUESTDIGEST`? Did `/_api/contextinfo`
-mint a digest with no session (step 2 printed its length)? Is `__VIEWSTATEENCRYPTED` empty, meaning
-ViewState is signed only? All three on an out-of-support build is critical by itself. **Stop there.**
+mint a digest with no session (step 2 printed its length)? Is `__VIEWSTATEENCRYPTED`
+**absent**, meaning ViewState is MAC-only? (The field is emitted only when ViewState is
+encrypted and its value is always empty, so absence - not emptiness - is the MAC-only signal;
+SharePoint pages are commonly MAC-only with no such field at all.) All three on an
+out-of-support build is critical by itself. **Stop there.**
 
 **5. Legacy Forms-auth endpoints, and the absence of the control that guards them.** The branded login
 page's lockout, CAPTCHA and MFA live in the branded login page. `Authentication.asmx` is a different

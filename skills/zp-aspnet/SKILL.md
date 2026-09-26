@@ -43,8 +43,10 @@ content-type decide, never the status code**. A `403` on `trace.axd` can still o
 `X-Forwarded-For` over the socket peer. `elmah.axd/download` streams the *whole* log as CSV - first line, then stop.
 
 **3. ViewState posture, then prove any recovered `machineKey` offline.** `__VIEWSTATE` decoding to `ff01` is a plaintext
-`ObjectStateFormatter` stream, and `__VIEWSTATEENCRYPTED` **present and empty** means signed only - so `validationKey`
-alone forges it, while a non-empty value needs both keys and is a far weaker primitive. Keys leak from a served
+`ObjectStateFormatter` stream, and `__VIEWSTATEENCRYPTED` is rendered **only when ViewState is encrypted**, and its value is
+always empty - so the field's **presence** means encrypted (needs `decryptionKey` as well as
+`validationKey`), and its **absence** means MAC-only, where `validationKey` alone forges it.
+Reading the empty value as "signed only" inverts the test and sends you after the wrong key. Keys leak from a served
 `web.config`, `elmah.axd`, or a repo or vendor DLL (`zp-code-audit`, `zp-js-secrets`); recompute the MAC over the ViewState **the server itself issued** - zero extra requests, unambiguous.
 
 ```bash

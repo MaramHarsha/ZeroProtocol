@@ -74,8 +74,11 @@ fingerprints if it is installed; the loop above is the fallback and needs nothin
 | `/actuator/health`, `/api/info`, `/version` returning a version string | **Low or N/A.** This is the one everybody files. Do not |
 | a debug endpoint that also *writes* (`/loggers`, `/gateway/routes`, `/shutdown`) | no longer disclosure - that is `zp-authz` and much higher |
 
-**Stop point for memory dumps.** Download, `strings | grep` for a key pattern, validate that
-one key is live with a single identity call, and **stop**. Never enumerate the account it opens.
+**Stop point for memory dumps.** Confirm the dump is downloadable, `strings | grep` for a key
+*pattern*, and **stop there**. Do **not** make an identity call with a key you extracted - that
+is authenticating with someone else's credential, which `zp-cloud` forbids outright and which
+lands your request in the target's audit log. Retrievability is the finding; report the key's
+type and location, redact its value, and tell them to rotate.
 
 **4. Directory listing.** A real listing (not an SPA catch-all) shows the server's own index.
 

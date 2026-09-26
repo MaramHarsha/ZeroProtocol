@@ -82,7 +82,9 @@ grep -nEo 'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' *.js                   # Se
 grep -nEo 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}' *.js  # JWT
 grep -nEo '\-\-\-\-\-BEGIN [A-Z ]*PRIVATE KEY' *.js                         # private key
 grep -nEiE '(api[_-]?key|secret|passwd|password|token|bearer|credential)["'\'']?\s*[:=]\s*["'\''][^"'\'']{12,}' *.js
-trufflehog filesystem . --only-verified          # verification is what makes this usable
+trufflehog filesystem . --no-verification        # NEVER --only-verified: its verification step
+                                                 # authenticates to the provider WITH the found
+                                                 # credential, which this skill forbids below
 ```
 
 **5. Decide whether each hit is live - without using it.**

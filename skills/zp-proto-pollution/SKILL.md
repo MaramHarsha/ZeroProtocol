@@ -70,7 +70,10 @@ It is harmless, unmistakable, and reversible by a restart.
 **3. Escalate to a real gadget.** The severity comes from what reads the property:
 
 ```
-child_process options    {"__proto__":{"shell":"/bin/sh","NODE_OPTIONS":"--require /proc/self/environ"}}  -> RCE
+child_process options    a polluted `shell` or `NODE_OPTIONS` reaches spawned children (Node
+                         copies the prototype-inherited env), so a reachable child_process call
+                         is an RCE-grade gadget. REPORT the reachable sink - do not fire a
+                         --require payload at a live target. See zp-rce-ssti for the proof bar.
 template engine options  {"__proto__":{"outputFunctionName":"x;<payload>;"}}  (EJS-style)   -> RCE
 authorization defaults   {"__proto__":{"isAdmin":true}} / {"role":"admin"}                   -> authz bypass
 validation bypass        polluting a schema default so a required check passes

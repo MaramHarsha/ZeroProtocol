@@ -132,8 +132,12 @@ sensitive endpoint (login, reset, OTP) - and do not demonstrate it by actually h
 # Supabase anon key found in the bundle: does RLS actually exist?
 curl -sk "https://<proj>.supabase.co/rest/v1/users?select=*&limit=1" \
   -H "apikey: $ANON" -H "Authorization: Bearer $ANON"
-# Firebase RTDB open rules
-curl -sk "https://<proj>.firebaseio.com/.json?print=pretty&limit=1"
+# Firebase RTDB open rules. `shallow=true` returns top-level KEYS ONLY, never values -
+# `limit` is not an RTDB parameter, and an unbounded /.json on an open database dumps the
+# entire dataset, which is mass exfiltration rather than proof.
+curl -sk "https://<instance>.firebaseio.com/.json?shallow=true"
+# modern instances are <proj>-default-rtdb.firebaseio.com or <proj>.<region>.firebasedatabase.app
+# - take the exact host from the bundle rather than guessing
 ```
 
 The anon key is **meant** to be public - it is not the finding. Missing row-level security is.

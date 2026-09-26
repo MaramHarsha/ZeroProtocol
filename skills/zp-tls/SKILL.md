@@ -76,8 +76,11 @@ for c in NULL EXPORT RC4 DES-CBC3-SHA aNULL SEED; do printf '%-12s ' "$c"   # -n
 curl -skI "https://$H/" | grep -i 'strict-transport-security'
 curl -sI  "http://$H/"  | grep -iE '^(HTTP/|location:)'          # plaintext entry point
 curl -s "https://hstspreload.org/api/v2/status?domain=$H" | jq -r '.status // "unknown"'
-for s in www login auth api id sso pay admin; do printf '%-6s ' "$s"
-  curl -skI --max-time 8 "https://$s.$H/" 2>/dev/null | grep -i 'strict-transport' || echo "-"; done
+# Guessed subdomains are NOT covered by this host's gate - funnel them through it first.
+# zp-scope filter exits 3 and emits nothing on an unconfirmed scope, so this fails closed.
+for s in $(printf '%s\n' www login auth api id sso pay admin | sed "s/$/.$H/" | zp-scope filter); do
+  printf '%-26s ' "$s"
+  curl -skI --max-time 8 "https://$s/" 2>/dev/null | grep -i 'strict-transport' || echo "-"; done
 ```
 
 `max-age=0`, a max-age under a day, or a missing `includeSubDomains` while a session cookie is scoped

