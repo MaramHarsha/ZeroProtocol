@@ -1,0 +1,21 @@
+---
+name: zp-remember
+description: "Record what this engagement taught, so class priors compound. Usage: /zp-remember"
+---
+
+# /zp-remember
+
+Write the durable lesson from this engagement into your memory directory. Not the transcript - the
+part that changes the next session.
+
+Worth recording:
+
+- **class priors** - what this program paid for, and what came back N/A or duplicate
+- **framing** - the wording that got accepted, the wording that got downgraded
+- **surface** - the endpoints, subdomains and estates that keep producing
+- **tooling** - anything that failed here and its working replacement
+
+Also append the outcome to `.zeroprotocol/submissions.md`, **including N/A and duplicate results**.
+Those are the most informative rows and the ones people skip.
+
+Do not record what the repo already says, or what only mattered to this conversation.

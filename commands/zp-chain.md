@@ -1,0 +1,24 @@
+---
+name: zp-chain
+description: "Turn a confirmed finding into a chain before reporting it. Usage: /zp-chain"
+---
+
+# /zp-chain
+
+You have a confirmed finding. Before it is written up, find the chain.
+
+Name the **capability gained** - read, write, execute, or control - then try at least three next
+links, or twenty minutes, whichever ends first:
+
+| capability | next links worth trying |
+|---|---|
+| read | leaked ids or tokens -> `zp-idor`; secrets -> `zp-jwt-oauth`; internal reach -> `zp-ssrf` |
+| write | stored payload -> `zp-xss`; object takeover -> `zp-idor`; config -> `zp-authz` |
+| execute | already terminal - stop and report immediately |
+| control | cookie scope -> `zp-takeover`; cache -> `zp-cache-poison`; redirect -> `zp-open-redirect` |
+
+Feeder classes - open redirect, CORS, info disclosure, CSRF, takeover, XXE, upload, race - are
+**not submitted alone**. For those the chain is the report.
+
+Stop when you reach a terminal impact (ATO, RCE, mass exfil, tenant break) or record the
+chain dead end with its evidence.

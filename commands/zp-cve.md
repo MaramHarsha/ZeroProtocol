@@ -1,0 +1,23 @@
+---
+name: zp-cve
+description: "Known-CVE check - version fingerprint to confirmed finding, backed by KEV and the local exploit corpora. Usage: /zp-cve CVE-2021-44228 | /zp-cve host.target.com"
+---
+
+# /zp-cve
+
+Load `skills/zp-cve/SKILL.md`. Target: **$ARGUMENTS**
+
+```bash
+zp-reports cve CVE-YYYY-NNNNN    # KEV status + nuclei template + PoCs + Exploit-DB
+zp-reports status                # what corpora are synced
+zp-reports sync all              # ~2.5 GB, local only
+```
+
+Prioritise by CISA KEV first - a listed CVE is being exploited right now and the operator needs to
+know today.
+
+**A version banner is a lead, never a finding.** Back-ported patches are invisible to banners, and
+a version-range report is the most-rejected submission in bug bounty. Confirm the behaviour.
+
+Read any nuclei template before running it: if its matcher is a version regex, it proves the
+banner, not the bug. Run the detection half of a public exploit, never the payload half.

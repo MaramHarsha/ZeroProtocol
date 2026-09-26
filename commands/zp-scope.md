@@ -1,0 +1,17 @@
+---
+name: zp-scope
+description: "Establish or check the authorization boundary. Creates scope.yaml, walks confirmation, or answers whether a host is in scope. Usage: /zp-scope target.com | /zp-scope check https://host/path"
+---
+
+# /zp-scope
+
+Load `skills/zp-scope/SKILL.md`.
+
+If **$ARGUMENTS** looks like a URL to test, run `zp-scope check` on it and report the verdict and
+the exit code plainly.
+
+Otherwise treat it as a new target: pull the authoritative program scope, read the policy before
+anything else, write `scope.yaml`, and then **stop and ask the user to confirm**.
+
+Never run `zp-scope confirm` on the user's behalf on your own initiative. Ask for the
+authorization in their words and record their words.

@@ -194,6 +194,26 @@ def main() -> int:
     for ref in sorted(referenced - names):
         errors.append(f"dangling reference to {ref!r}: no skills/{ref}/ directory exists")
 
+    # ---- slash commands ---------------------------------------------------- #
+    cmd_rows = []
+    cmds_dir = REPO / "commands"
+    if cmds_dir.is_dir():
+        for cf in sorted(cmds_dir.glob("*.md")):
+            rel = cf.relative_to(REPO)
+            meta, body, err = parse_frontmatter(cf.read_text(encoding="utf-8"))
+            if err:
+                errors.append(f"{rel}: {err}")
+                continue
+            if meta.get("name") != cf.stem:
+                errors.append(f"{rel}: name is {meta.get('name')!r} but the file is {cf.stem!r}.md")
+            if not meta.get("description"):
+                errors.append(f"{rel}: no `description` - it will not appear in the command list")
+            # commands reference skills; a typo here is a dead command
+            for ref in set(re.findall(r"`(zp-[a-z0-9-]+)`", body)) | set(
+                    re.findall(r"skills/(zp-[a-z0-9-]+|zeroprotocol)/SKILL\.md", body)):
+                referenced.add(ref)
+            cmd_rows.append((cf.stem, len(meta.get("description", ""))))
+
     # ---- agents ---------------------------------------------------------- #
     agent_rows = []
     agents_dir = REPO / ".claude" / "agents"
@@ -246,6 +266,11 @@ def main() -> int:
             print(f"  {n:<{w}}  {nl:>4} lines  desc {dl:>4}")
         total = sum(r[1] for r in rows)
         print(f"\n  {total} lines of skill content across {len(rows)} skills")
+        if cmd_rows:
+            print(f"\n  {len(cmd_rows)} slash commands")
+            cw = max(len(r[0]) for r in cmd_rows)
+            for n, dl in cmd_rows:
+                print(f"    /{n:<{cw}}  desc {dl:>4}")
         if agent_rows:
             print(f"\n  {len(agent_rows)} agents")
             aw = max(len(r[0]) for r in agent_rows)

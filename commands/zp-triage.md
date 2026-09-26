@@ -1,0 +1,22 @@
+---
+name: zp-triage
+description: "Run the kill gate on a finding before any report is written. Usage: /zp-triage"
+---
+
+# /zp-triage
+
+Load `skills/zp-triage/SKILL.md` and run the seven questions on the current finding, in writing.
+
+Thirty seconds to kill a lead, thirty minutes to write a report - so this runs first, always.
+
+Include the dedup check:
+
+```bash
+zp-intel dedup <program> <key terms>    # exit 8 == likely duplicate, read them
+```
+
+Then the two adversarial gates: browser verification for any client-side class (via
+`zp-browser`), and devil's advocate - argue against your own finding before anyone else does.
+
+Return a verdict: PASS / KILL / DOWNGRADE / CHAIN-REQUIRED. A KILL is finished work - record it
+in `coverage/` so it is not re-tested.

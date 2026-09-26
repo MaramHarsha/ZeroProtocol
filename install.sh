@@ -105,6 +105,16 @@ if [ "$MODE" = remove ]; then
     fi
   done
 
+  for c in "$REPO"/commands/zp-*.md; do
+    [ -f "$c" ] || continue
+    d="$CLAUDE_DIR/commands/$(basename "$c")"
+    if [ -L "$d" ] && [ "$(readlink "$d")" = "$c" ]; then
+      run "rm -f '$d'"; step "unlinked /$(basename "${c%.md}")"
+    elif [ -f "$d" ] && cmp -s "$c" "$d"; then
+      run "rm -f '$d'"; step "removed copied /$(basename "${c%.md}")"
+    fi
+  done
+
   # restore the newest backup, if any
   newest="$(find "$CLAUDE_DIR/zeroprotocol-backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1 || true)"
   if [ -n "$newest" ] && [ -d "$newest" ]; then
@@ -203,6 +213,28 @@ if [ -d "$AGENTS_SRC" ]; then
     else
       run "ln -sfn '$a' '$dst'"; step "linked ${n%.md}"
     fi
+  done
+fi
+
+# --------------------------------------------------------------------------- #
+# 1c. slash commands
+# --------------------------------------------------------------------------- #
+CMDS_SRC="$REPO/commands"
+CMDS_DST="$CLAUDE_DIR/commands"
+if [ -d "$CMDS_SRC" ]; then
+  say ""
+  say "1c. Commands -> $CMDS_DST"
+  run "mkdir -p '$CMDS_DST'"
+  for c in "$CMDS_SRC"/zp-*.md; do
+    [ -f "$c" ] || continue
+    n="$(basename "$c")"; dst="$CMDS_DST/$n"
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$c" ]; then step "ok   /${n%.md}"; continue; fi
+    if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+      run "mkdir -p '$BACKUP_DIR/commands'"; run "mv '$dst' '$BACKUP_DIR/commands/$n'"
+      step "backed up an existing /${n%.md}"
+    fi
+    if [ "$MODE" = copy ]; then run "cp -f '$c' '$dst'"; step "copied /${n%.md}"
+    else run "ln -sfn '$c' '$dst'"; step "linked /${n%.md}"; fi
   done
 fi
 

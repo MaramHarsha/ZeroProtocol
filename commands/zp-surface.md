@@ -1,0 +1,17 @@
+---
+name: zp-surface
+description: "Show the ranked attack surface and what it dispatches to. Usage: /zp-surface"
+---
+
+# /zp-surface
+
+Read `.zeroprotocol/surface/` and `.zeroprotocol/queue.md` and present the current picture:
+
+- live hosts by status code, with the 401/403 routes called out as P1 (they prove a route exists)
+- the ranked queue: P1 / P2 / blocked / chain-pending / killed
+- the technology fingerprint and which classes it justifies
+- coverage so far: which (host, class) pairs have records, which have `not-applicable` with a
+  reason, and which are simply untested
+
+Then state the single highest-value next action and why. If `queue.md` does not exist, say so and
+point at `/zp-recon`.

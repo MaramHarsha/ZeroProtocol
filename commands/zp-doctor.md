@@ -1,0 +1,22 @@
+---
+name: zp-doctor
+description: "Survey what security tooling this machine has and how ZeroProtocol will degrade without it. Usage: /zp-doctor"
+---
+
+# /zp-doctor
+
+```bash
+zp-doctor            # per-phase inventory and the capability verdict
+zp-doctor --json     # branch on this rather than guessing
+zp-doctor --missing
+```
+
+Report the **capability** verdict, not the tool list - what can be done, what runs on a fallback,
+and what is genuinely unavailable.
+
+Record the degraded set in `.zeroprotocol/notes.md`, because it changes what "exhausted" means
+later. A class you could not test properly is `not-applicable: no tooling` with the gap named,
+never a silent skip.
+
+Do not install anything. If the user wants the gaps closed, show them
+`zp-doctor --install-script` and let them read it first.
