@@ -25,9 +25,16 @@ while read -r h; do
   [ -n "$c" ] && echo "$h -> $c"
 done < surface/in-scope.txt | tee to-cnames.txt
 
-# NXDOMAIN on the CNAME target is the strongest single signal
+# NXDOMAIN on the CNAME target is the strongest single signal - and it is the *rcode* that
+# makes the provider resource claimable. `dig +short` prints nothing for NOERROR/NODATA too
+# (a name with only MX/TXT records is registered and not claimable), so read the header.
 awk '{print $3}' to-cnames.txt | sed 's/\.$//' | sort -u | while read -r t; do
-  dig +short "$t" | grep -q . || echo "DANGLING: $t"
+  st=$(dig +noall +comments "$t" | sed -n 's/.*status: \([A-Z]*\).*/\1/p' | head -1)
+  case "$st" in
+    NXDOMAIN) echo "DANGLING(NXDOMAIN): $t" ;;
+    NOERROR)  { dig +short A "$t"; dig +short AAAA "$t"; } | grep -q . \
+                || echo "exists, no address: $t" ;;
+  esac
 done
 
 subzy run --targets surface/in-scope.txt --hide_fails        # ~70 curated fingerprints
@@ -46,7 +53,7 @@ dig +short CNAME "$H"; curl -sk --max-time 15 "https://$H/" | head -c 400
 | `*.s3.amazonaws.com` | `NoSuchBucket` | yes - create the bucket with that exact name |
 | `*.github.io` | `There isn't a GitHub Pages site here` | yes - repo + CNAME file |
 | `*.herokudns.com` / `herokuapp.com` | `No such app` | yes |
-| `*.azurewebsites.net`, `*.cloudapp.azure.com`, `*.trafficmanager.net` | `Web App - Unavailable`, NXDOMAIN | yes |
+| `*.azurewebsites.net`, `*.cloudapp.azure.com`, `*.trafficmanager.net` | **NXDOMAIN on the CNAME target** - no body string is reliable here | yes, when the resource is deleted |
 | `*.myshopify.com` | `Sorry, this shop is currently unavailable` | yes |
 | `*.fastly.net` | `Fastly error: unknown domain` | yes, via a Fastly account |
 | `*.pantheonsite.io` | `The gods are wise` | yes |
@@ -56,9 +63,16 @@ dig +short CNAME "$H"; curl -sk --max-time 15 "https://$H/" | head -c 400
 | `*.cloudfront.net` | `Bad request` / `ERROR: The request could not be satisfied` | **usually not** - needs the distribution's alias |
 | `*.elb.amazonaws.com` | vendor error | **no** - but a dangling ELB can be re-IP'd; report as a risk, not a takeover |
 
+Azure is the one row with no body fingerprint: the vendored corpus keys it on NXDOMAIN plus
+an Azure CNAME (`reports/nuclei-templates/dns/azure-takeover-detection.yaml`) and no Azure
+claim-page string appears anywhere in the 73 takeover templates. Confirm the name is actually
+free in an Azure account you own before writing that report.
+
 Fingerprints drift constantly. **Read the actual response body** rather than trusting a
-tool's verdict, and re-check the vendor's current behaviour before writing a report - several
-providers (Netlify, Vercel, GitHub) added ownership verification and are no longer claimable.
+tool's verdict, and re-check the vendor's current behaviour before writing a report. Netlify
+and Vercel verify domain ownership and are generally not claimable now; **GitHub Pages still
+is**, unless the organisation has verified the domain - so check for a verification TXT
+record before you write it up.
 
 **3. Check the other record types.** These are rarer, higher impact, and usually unhunted.
 
@@ -77,14 +91,22 @@ expired domain lets you pass SPF for the target.
 ```bash
 for s in dev staging test prod backup api assets static cdn media uploads logs data; do
   for pat in "$D-$s" "$s-$D" "$D.$s"; do
-    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 "https://$pat.s3.amazonaws.com/")
-    [ "$code" != "404" ] && echo "$code $pat.s3.amazonaws.com"
+    b=$(curl -sk --max-time 8 -w '\n%{http_code}' "https://$pat.s3.amazonaws.com/")
+    code=$(printf '%s' "$b" | tail -1)
+    case "$code" in
+      404) printf '%s' "$b" | grep -q 'NoSuchBucket' \
+             && echo "FREE  $pat.s3.amazonaws.com" ;;
+      403) echo "exists, private -> zp-cloud: $pat.s3.amazonaws.com" ;;
+      *)   echo "$code $pat.s3.amazonaws.com -> zp-cloud" ;;
+    esac
   done
 done
 ```
 
-`404 NoSuchBucket` on a name the target actively references = claimable. `403` = the bucket
-exists and is private; that is not a takeover (see `zp-cloud`).
+`404` with `<Code>NoSuchBucket</Code>` in the body, on a name the target actively references,
+is the claimable case - that is what this sweep exists to find, so confirm the body rather
+than trusting the status alone. `403` = the bucket exists and is private; that is not a
+takeover (see `zp-cloud`).
 
 **5. Claim it - correctly, or not at all.**
 

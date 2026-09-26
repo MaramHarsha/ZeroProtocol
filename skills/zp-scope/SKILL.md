@@ -23,15 +23,31 @@ zp-scope check https://api.target.com/v1/users
 |---|---|---|
 | 0 | in scope, human-confirmed | proceed |
 | 1 | out of scope | refuse; name the pattern that denied it; do not retry, do not rephrase |
-| 3 | scope exists, not confirmed | passive recon only; walk the user through confirmation |
+| 3 | scope file exists, not confirmed | passive recon only; walk the user through confirmation |
 | 4 | no scope file | stop; `zp-scope init` |
-| 2 | usage/parse error | stop; fix the file. An error is **never** treated as allow |
+| 2 | usage error - unknown subcommand, missing argument, or a refused `confirm` | stop; fix the call. An error is **never** treated as allow |
 
 Three rules that make the gate real:
 
 1. **Deny wins over allow.** An `out_of_scope` match beats any wildcard.
 2. **No rule matched means deny.** Absence of permission is not permission.
 3. **Any error means deny.** Never fail open, never "assume it's probably fine".
+
+Two things the exit code will **not** tell you:
+
+- **Unconfirmed outranks deny.** While `confirmed` is false, `check` exits 3 for *every* target -
+  including one that `out_of_scope` explicitly denies. The deny is printed, not returned. So 3
+  means "I cannot answer yet", never "this host just needs a signature", and with several targets
+  in one call it hides a deny among them. Read the printed `DENY` lines, or pass `--json` and
+  branch on the per-target `allowed` field, which is correct either way. A `DENY` is final: never
+  walk a user through confirming a host the file already excludes.
+- **A corrupt scope file is not an error.** The reader is a YAML subset with no error path. A list
+  item at the wrong indentation is dropped, and an unterminated quote survives as a literal
+  pattern - `- "*.example.com` becomes the pattern `"*.example.com`, which matches nothing. That
+  fails closed, so you silently lose scope rather than gain it, but nothing exits 2 and nothing
+  warns. After editing the file by hand, read the pattern counts back from `zp-scope status` and
+  `check` one known host per line you added. `zp-scope show` prints the file raw and will not
+  show you the loss.
 
 ---
 

@@ -21,6 +21,7 @@ the session protects. Check all three before writing anything.
 
 ```bash
 EP="https://$H/api/me"
+BT='`'                                   # a literal backtick - the header is never percent-decoded
 for o in "https://evil.tld" \
          "null" \
          "https://$H.evil.tld" \
@@ -28,8 +29,8 @@ for o in "https://evil.tld" \
          "https://$H-evil.tld" \
          "http://$H" \
          "https://sub.$H" \
-         "https://evil.tld%60.$H" \
-         "https://$H%23.evil.tld" \
+         "https://$H$BT.evil.tld" \
+         "https://${H}_.evil.tld" \
          "https://$H.evil.tld:443"; do
   printf '%-40s ' "$o"
   curl -sk -I "$EP" -H "Origin: $o" -H "Cookie: session=$TOK_A" \
@@ -49,6 +50,16 @@ done
 
 The suffix/prefix variants (`$H.evil.tld`, `evil$H`) catch the two most common regex mistakes:
 matching the domain anywhere in the origin instead of anchoring it.
+
+The backtick and underscore origins are the special-character host trick, and they need care.
+`Origin` is a serialised origin, not a URL the server decodes - it compares the bytes you send, so
+probe with the literal character (`` ` ``, `_`, `+`, `=`) and never with `%60`. The attacker's label
+must be the registrable suffix (``https://$H`.evil.tld``): the bypass is a Safari/legacy-WebKit URL
+parser accepting the odd character inside a host that *your* zone answers, while the full string
+still satisfies a `\.$H$`-style regex. Chromium and Firefox reject such hosts, so before filing,
+make `zp-browser` show a browser actually sending that `Origin` - an origin no browser emits is the
+"cannot reproduce" close this skill exists to avoid. Percent-escapes and `#` truncation belong in a
+redirect *parameter*, which is decoded; that ladder is `zp-open-redirect`, not this one.
 
 **2. Establish that the endpoint actually holds protected data.**
 

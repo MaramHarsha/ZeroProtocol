@@ -47,10 +47,24 @@ candidate finding.
 ## 2. Tool discovery and argument boundaries
 
 ```bash
-# what the protocol accepts, versus what the UI exposes
-curl -sk "$MCP/tools/list" -H "Authorization: Bearer $TOK" | jq '.tools[] | {name, description, inputSchema}'
+# what the protocol accepts, versus what the UI exposes. MCP is JSON-RPC 2.0 over ONE
+# endpoint - `tools/list` is a method name, never a URL path, and the array is at .result.tools
+MH=(-H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream'
+    -H 'MCP-Protocol-Version: 2025-06-18' -H "Authorization: Bearer $TOK")
+SID=$(curl -sk -D - -o /dev/null "$MCP" "${MH[@]}" -d '{"jsonrpc":"2.0","id":1,"method":"initialize",
+  "params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"zp","version":"1"}}}' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
+curl -sk "$MCP" "${MH[@]}" ${SID:+-H "Mcp-Session-Id: $SID"} \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > /tmp/zp.mcp
+# Streamable HTTP may SSE-frame the reply - take the data payload when it does
+grep -q '^data: ' /tmp/zp.mcp && sed -n 's/^data: //p' /tmp/zp.mcp > /tmp/zp.r || cp /tmp/zp.mcp /tmp/zp.r
+jq '.result.tools[] | {name, description, inputSchema}' /tmp/zp.r
+# same JSON-RPC frames for resources/list and prompts/list; a stdio server takes them on its pipe
 ```
 
+- A `404`/`405` here usually means you sent REST at a JSON-RPC server, not that the server is
+  toolless - only an empty `.result.tools` says that. Some gateways do bolt a REST shim in front;
+  treat that shim as a second surface, and compare its list against the protocol's.
 - Enumerate advertised **and conditionally available** tools, resources, prompts and schemas.
 - Compare the UI's tool list against what the runtime will actually accept directly. Tools the UI
   hides are frequently still callable.

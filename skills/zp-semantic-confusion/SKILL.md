@@ -130,15 +130,23 @@ for cp in (0x212A,0xFF07,0xFF0F,0x017F,0x0130,0x00AD):
 **Lifecycle and internal re-parse** - the same request read again in a second state.
 
 ```bash
+NX=zp-nonexistent-91234                                 # a path whose clean answer is a 404
+for p in /admin "/$NX"; do                              # both baselines, no header
+  printf '%-26s ' "base $p"; curl -sk -o /tmp/zp.b -w '%{http_code} ' "https://$H$p"; md5sum < /tmp/zp.b
+done
 for h in "X-Original-URL: /admin" "X-Rewrite-URL: /admin" "X-Forwarded-Uri: /admin"; do
-  printf '%-18s ' "${h%%:*}"; curl -sk -o /dev/null -w '%{http_code}\n' "https://$H/" -H "$h"
+  printf '%-26s ' "${h%%:*}"; curl -sk -o /tmp/zp.b -w '%{http_code} ' "https://$H/$NX" -H "$h"
+  md5sum < /tmp/zp.b
 done   # add "X-HTTP-Method-Override: PUT" on a POST route to test verb re-reads
 ```
 
-A `200` on `/` carrying `X-Original-URL: /admin` means the edge keyed its ACL on the visible path
-while the app re-routed on the header. Also compare a route reached directly against the same one
-reached via an in-app redirect or subrequest - metadata surviving into phase two is this bug on a
-different clock.
+Send the header on the unprivileged path, never on `/`: `/` answers `200` with and without the
+header on essentially every target, and `-o /dev/null` throws away the only evidence, so a bare
+`200` there is a guaranteed false positive rather than a signal. The positive is the **pair** -
+status *and* body digest on `/$NX` moving off its own `404` baseline and onto the admin body (the
+`/admin` digest, or content a `403` withheld). Same status, same digest as baseline is a kill.
+Also compare a route reached directly against the same one reached via an in-app redirect or
+subrequest - metadata surviving into phase two is this bug on a different clock.
 
 ---
 

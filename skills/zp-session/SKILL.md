@@ -23,10 +23,22 @@ cookie, an `Authorization` header, or a URL.
 
 ```bash
 H=target.tld; ME="https://$H/api/me"; JAR_A=$(mktemp); JAR_B=$(mktemp)
-sess(){ awk '/^#HttpOnly_/{sub(/^#HttpOnly_/,"")} /^#/{next}   # jar: $6=name $7=value
-              NF>=7 && $6 ~ /sess|sid|SID|auth|token|remember/ {print $6"="$7}' "$1" | tail -1; }
+# List every candidate, then name the session cookie once. Do not match `token` and do not
+# take the last line: a jar is written in server order, so on a stock Django or Rails jar
+# (sessionid, then csrftoken) a `tail -1` over a /token/ pattern hands you the CSRF cookie -
+# measured. Every step below would then test a non-session cookie and read as a finding.
+cands(){ awk '/^#HttpOnly_/{sub(/^#HttpOnly_/,"")} /^#/{next}   # jar: $6=name $7=value
+               NF>=7 && $6 ~ /sess|sid|SID|auth|remember/ && $6 !~ /csrf|xsrf/ {print $6"="$7}' "$1"; }
+SESS_NAME=                                       # fill this in from what cands() prints
+sess(){ [ -n "$SESS_NAME" ] || { echo "name the session cookie: $(cands "$1" | cut -d= -f1 | tr '\n' ' ')" >&2; return 1; }
+        awk -v n="$SESS_NAME" '/^#HttpOnly_/{sub(/^#HttpOnly_/,"")} /^#/{next}
+              NF>=7 && $6==n {print $6"="$7}' "$1"; }
 curl -sk -D - -o /dev/null "https://$H/login" | grep -i '^set-cookie'
 ```
+
+`SESS_NAME` is the cookie that appears on the **auth** response and whose removal breaks
+`/api/me` - prove both before you set it. `sess()` fails loudly until you do, which is the
+behaviour you want: a wrong cookie here is a confident false positive in every later step.
 
 **2. Baseline and negative control, before anything else.** This decides whether a later 200 means
 anything at all.
@@ -176,7 +188,7 @@ Nothing above `curl`, `awk` and `python3` is needed. With an intercepting proxy 
 | session id decodes to a user id, timestamp or counter | **High** on structure alone. Do **not** brute-force to "prove" it |
 | long random id, no duplicates in the sample, no decode | killed. Character counting is not an entropy claim |
 | missing `HttpOnly` with no XSS sink, or missing `Secure` behind preloaded HSTS with no `http` listener | informational. Say why it is not exploitable here - `zp-xss` for the sink |
-| `SameSite` absent or `None` | reachability only. Prove a cross-site state change first - `zp-cors` |
+| `SameSite` absent or `None` | reachability only. Prove a cross-site state change first - `zp-csrf` |
 | session in URL plus an off-site include and no `Referrer-Policy` | confirmed leak. Without the include, Low - logs and history only |
 | concurrent sessions allowed and documented, or the attack needed the victim's password | not a finding. Killed |
 
@@ -207,7 +219,8 @@ Nothing above `curl`, `awk` and `python3` is needed. With an intercepting proxy 
 ## Hand off to
 
 Token internals, refresh rotation, OAuth and SSO logout gaps -> `zp-jwt-oauth`. Cookie theft sinks and
-`HttpOnly` chains -> `zp-xss`. `SameSite`, CSRF and cross-origin reads -> `zp-cors`. Endpoints never
+`HttpOnly` chains -> `zp-xss`. `SameSite` and forged state changes -> `zp-csrf`; cross-origin
+reads and `postMessage` -> `zp-cors`. Endpoints never
 session-gated -> `zp-authz`, `zp-idor`. Parent-domain cookie plus a dangling subdomain -> `zp-takeover`.
 Authenticated responses in a shared cache -> `zp-cache-poison`. Ids or endpoints in bundles ->
 `zp-js-secrets`. Real login traffic to replay -> `zp-proxy`; browser proof of a `Referer` leak or a

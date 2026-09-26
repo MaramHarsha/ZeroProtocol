@@ -62,12 +62,16 @@ path. **Diff the bodies** - plenty of apps render an empty shell at 200.
 routes are a different path space sharing the page's loader.
 
 ```bash
-for p in "$R" "$R/" "$R/." "//$R" "/_next/data/$B$R.json" "/_next/data/$B$R/index.json" \
-         "%5Fnext/data/$B$R.json" "$R?__nextDataReq=1"; do
-  printf '%-52s ' "$p"; curl -sk -o /dev/null -w '%{http_code} %{size_download}\n' "https://$H/${p#/}"
+for p in "$R" "$R/" "$R/." "/$R" "/_next/data/$B$R.json" "/_next/data/$B$R/index.json" \
+         "/%5Fnext/data/$B$R.json" "$R?__nextDataReq=1"; do
+  printf '%-52s ' "$p"; curl -sk -o /dev/null -w '%{http_code} %{size_download}\n' --path-as-is "https://$H$p"
 done
 curl -sk -D - "https://$H$R?_rsc=zp1" -H 'RSC: 1' | head -c 400
 ```
+
+`--path-as-is` is mandatory, as it is in `zp-springboot` and `zp-aspnet` - curl otherwise collapses `/.`
+and `//` locally and you send the canonical path twice. `"/$R"` is the double-slash row (`//admin`);
+prefix it once, because `"//$R"` with `R=/admin` puts three slashes on the wire.
 
 **4. Server Actions.** An action is a POST to *any* rendered route carrying a `Next-Action` header
 with the action's hash. Authorization must sit inside the action body; many apps only hide the button.
@@ -87,15 +91,21 @@ retry on the route it was declared for. Read-only-looking actions first; step 8 
 **5. RSC and `__NEXT_DATA__` leakage.** Everything a Server Component hands a Client Component ships in the payload the browser receives, rendered or not.
 
 ```bash
-curl -sk "https://$H/dashboard" -H "Cookie: session=$TOK_A" | python3 - <<'PY'
+curl -sk "https://$H/dashboard" -H "Cookie: session=$TOK_A" -o /tmp/zp.next.html
+python3 - /tmp/zp.next.html <<'PY'
 import sys,re,json
-b=sys.stdin.read(); m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',b,re.S)
+b=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+m=re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',b,re.S)
 if m: print(json.dumps(json.loads(m.group(1)).get('props',{}),indent=1)[:3000])
 print('\n'.join(re.findall(r'self\.__next_f\.push\(\[1,"(.{0,600}?)"\]\)',b))[:3000])
 PY
 curl -sk "https://$H/dashboard?_rsc=zp1" -H 'RSC: 1' -H "Cookie: session=$TOK_A" \
   | grep -aoiE '(secret|token|apikey|password|internal|sk_live|salary)[^,"]{0,60}' | sort -u
 ```
+
+Save the body and pass the path - a heredoc and a pipe cannot both be stdin, and `python3 - <<'PY'`
+fed from a pipe reads the *script* from stdin, so `sys.stdin.read()` returns `""` and the step prints
+nothing on a target that is leaking. Empty output here means empty output, not a clean result.
 
 **6. ISR and flight cache poisoning.** Unique buster on every probe so no real visitor is served your response - `zp-cache-poison` owns that discipline; this is the Next-specific keying bug.
 
@@ -182,7 +192,7 @@ Every probe is `curl` plus `python3` stdlib. `nuclei -tags nextjs` at the progra
 - **Authorization in `layout.tsx` only** - layouts are skipped on RSC-only navigations; the page data still ships.
 - **Server Actions on admin surfaces** (`deleteUser`, `impersonate`, `exportInvoices`, `approve`) - the id is public, the authz is the rendered button.
 - **A Server Component passing a whole session, user or config object as a prop** to a client component that renders one field.
-- **`images.domains: ["*"]`** or a wildcard `remotePatterns` hostname - a fetcher whose allow-list allows everything.
+- **A wildcard `remotePatterns` hostname** - `{ hostname: '**' }`, or a leading `*.`/`**.` pattern: a fetcher whose allow-list allows everything. `images.domains` is an exact-hostname list that never supported wildcards, so `domains: ["*"]` matches nothing and is not this bug; a long literal `domains` array is the weaker finding - hand any dangling host to `zp-takeover`.
 - **NextAuth `callbackUrl` and middleware `new URL(param, req.url)`** - open redirect into OAuth code theft, which is the report that pays.
 
 ---

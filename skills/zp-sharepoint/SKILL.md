@@ -88,21 +88,30 @@ curl -sk -X POST "https://$H/_vti_bin/Authentication.asmx" -H 'Content-Type: tex
 ```
 
 `Windows` means this vector is N/A - say so and move on. `Forms` means the endpoint validates credentials.
-To show the throttle is **absent**, send **five** `Login` calls for one synthetic account that cannot
-exist (`zpcanary-0000@invalid.example`) with five random strings, recording status, byte length and
-latency. Five identical rows with flat timing proves there is no control, and **that is the finding and
-the stop point.** Never send a wordlist, a real or harvested username, an account list, or a credential
-you were not issued - the defect is unbounded credential validation, not a cracked password.
+Send **five** `Login` calls for one synthetic account that cannot exist
+(`zpcanary-0000@invalid.example`) with five random strings, recording status, byte length and latency,
+and **that is the stop point.** Read the table honestly: five identical rows show that
+`Authentication.asmx` validates credentials outside the branded login flow and that no *edge* rate
+limit acts at five requests. They do **not** prove lockout is absent - AD and Forms counters are keyed
+to real principals, usually trip at 5-10 failures, and a principal that does not exist may increment
+nothing. The reportable defect is the alternate code path answering with none of the branded page's
+MFA, CAPTCHA or lockout in front of it; a bounded lockout test needs the program's written permission
+and an account they issue you. Never send a wordlist, a real or harvested username, an account list,
+or a credential you were not issued.
 
 **6. Work the authenticated surface with the lowest-privileged account you were issued** - Online and
 on-prem both. The finding is what that account reaches that its role does not justify.
 
 ```bash
 A=(-H 'Accept: application/json;odata=nometadata' -H "Cookie: $SP_COOKIE")
-curl -sk "${A[@]}" "https://$H/_api/web/roleassignments?\$expand=Member" | python3 -c \
- 'import sys,json;[print(r["Member"]["LoginName"],"|",[b["Name"] for b in r["RoleDefinitionBindings"]]) for r in json.load(sys.stdin)["value"]]'
+curl -sk "${A[@]}" "https://$H/_api/web/roleassignments?\$expand=Member,RoleDefinitionBindings" | python3 -c \
+ 'import sys,json;[print(r.get("Member",{}).get("LoginName","?"),"|",[b["Name"] for b in r.get("RoleDefinitionBindings",[])]) for r in json.load(sys.stdin)["value"]]'
 curl -sk "${A[@]}" "https://$H/_api/web/lists?\$select=Title,Hidden,ItemCount"
 ```
+
+Expand **both** navigation properties. `RoleDefinitionBindings` is deferred, and under
+`odata=nometadata` an unexpanded nav property is absent from the payload entirely - so the unexpanded
+call raises `KeyError` and the highest-value step on this surface prints nothing on a target that is oversharing.
 
 `Everyone`, `Everyone except external users`, `All Authenticated Users` or `NT AUTHORITY\authenticated
 users` holding anything above *Read* over regulated content is the oversharing finding, and on Online
@@ -115,11 +124,14 @@ every hit is genuinely readable by your account.
 curl -sk "${A[@]}" --get "https://$H/_api/search/query" --data-urlencode "rowlimit=10" \
   --data-urlencode "querytext='secret OR credential OR \"private key\"'" \
   --data-urlencode "selectproperties='Title,Path,Author'"
-curl -sk "${A[@]}" --get "https://$H/_api/search/query" --data-urlencode "querytext='*'" \
-  --data-urlencode "sourceid='B09A7990-05EA-4AF9-81EF-EDFAB16C4E31'" --data-urlencode "rowlimit=10"
+curl -sk "${A[@]}" --get "https://$H/_api/search/query" --data-urlencode "querytext='contentclass:STS_ListItem_DocumentLibrary'" \
+  --data-urlencode "sourceid='8413CD39-2156-4E00-B54D-11EFD9ABDB89'" --data-urlencode "rowlimit=10"   # Local SharePoint Results
 ```
 
-Keep `rowlimit` small and the query count in single digits. Report **one document path and the role binding
+`8413CD39-…` is the built-in **Local SharePoint Results** (content) source. Do not reach for
+`B09A7990-…`: that is **Local People Results**, it returns user-profile rows rather than the document
+path this step is after, and `querytext='*'` against it is a bulk read of the tenant directory - the PII
+scrape the pitfalls below forbid. Keep `rowlimit` small and the query count in single digits. Report **one document path and the role binding
 that should have blocked it**, reduced to a hash and a byte count unless the program asks for more.
 
 **8. Sharing links, external policy, workflows, BCS and add-in principals.** Create the artifact
@@ -163,7 +175,7 @@ its SharePoint templates match on version strings far more often than on behavio
 |---|---|
 | anonymous `__REQUESTDIGEST` + anonymous `contextinfo` digest + `__VIEWSTATEENCRYPTED=""` on an out-of-support build | **confirmed critical.** Pre-auth state-change preconditions on code that will never be patched. Ship the three responses, not an exploit |
 | the same three on a currently-patched build | **misconfiguration**, High at most - the patch or encrypted ViewState removed the deserialization arm. Name which one saved them |
-| `Authentication.asmx` in `Forms` mode, five flat responses | **confirmed** - unbounded credential validation bypassing the branded login's lockout and MFA. Severity from what one valid credential would reach |
+| `Authentication.asmx` in `Forms` mode, five flat responses | **confirmed** that a second credential-validation path answers outside the branded login flow, with its MFA and CAPTCHA not in front of it - severity from what one valid credential would reach. Absent lockout is a **lead**, not proven: five failures against a non-existent principal cannot establish it |
 | a low-privilege account's search returns a document from a site it was never granted | **confirmed oversharing.** The strongest Online finding. Name the principal and the role binding |
 | an "Anyone" link that resolves although the policy says anonymous sharing is disabled | confirmed - the policy is not enforced at the link layer |
 | build in range, nothing else | **not a finding.** The defining junk report of this product - route to `zp-cve` and confirm behaviour |
@@ -190,7 +202,7 @@ anonymous behaviour. And on Online you test **the tenant's configuration** - a p
 
 - **Reporting a build number.** It is a lead; `zp-cve` turns it into a finding or kills it.
 - **Sending a deserialization payload or a ViewState you signed.** The precondition chain is the report. A shell is unauthorized access and is in no program's scope.
-- **Spraying credentials.** No wordlists, no harvested usernames, no account lists, no "just a few common passwords". Five requests, one synthetic account that cannot exist, to prove a control is missing - and nothing past that.
+- **Spraying credentials.** No wordlists, no harvested usernames, no account lists, no "just a few common passwords". Five requests, one synthetic account that cannot exist, to show the path answers - and nothing past that. Do not write up five failures as proof that lockout is gone.
 - **Scraping search,** or reading a colleague's or another tenant's documents because a link resolved. Ten rows prove the exposure; ten thousand is exfiltration. Use a canary you uploaded to a site you own.
 - **Calling `download.aspx` SSRF** on an echoed URL, calling the extension blocklist an oracle, or using a `machineKey`, farm credential or connection string you recovered - prove it leaked, then stop.
 - **Touching Central Administration, farm settings, site deletion, or a workflow bound to a real list.** Read-only on anything shared.

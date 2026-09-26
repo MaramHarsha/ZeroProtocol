@@ -22,7 +22,9 @@ client's audit trail recorded at each step. An assumed role is not a trophy.
 
 ## Procedure
 
-1. **Clear the tier gate**, write `.zeroprotocol/engagement.yaml`, and list every in-scope account,
+1. **Clear the tier gate** - the six engagement facts go into `.zeroprotocol/scope.yaml` by key
+   name (`authorization_ref`, `contact_technical`, `contact_stop`, `window`, `deconfliction`,
+   `stop_condition`), which is what `zp-scope tier redteam` reads. Then list every in-scope account,
    subscription, project and org node. A linked account is a third party until the scope names it.
 2. **Fix the starting identity** - what you hold, who issued it, when it expires. If a credential
    turns up mid-run that the engagement did not grant, stop and call the contact.
@@ -75,8 +77,12 @@ aws lambda list-functions --query 'Functions[].[FunctionName,Role]' --output tab
 aws glue get-dev-endpoints --query 'DevEndpoints[].[EndpointName,RoleArn]' --output table
 ```
 
-PMapper graphs escalation paths from a read-only collection and CloudSplaining scores
-`aws-authz.json` for wildcard actions - both read your export and send nothing at the target.
+CloudSplaining scores the exported `aws-authz.json` for wildcard actions entirely offline
+(`cloudsplaining scan --input-file aws-authz.json`) and sends nothing. PMapper is not offline: it
+builds its own graph with live read-only calls (`pmapper graph create` enumerates IAM plus EC2,
+Lambda and the other services it models, using your credentials) and cannot be pointed at your
+export - only its path analysis afterwards is local. Declare those calls and log them, because
+Deconfliction below requires the client to attribute every API call to you.
 
 **GCP - bindings, impersonation and actAs**
 
@@ -87,8 +93,11 @@ gcloud projects get-iam-policy "$P" --flatten="bindings[].members" \
 gcloud asset search-all-iam-policies --scope="projects/$P" --query="policy:\"$SA\""
 gcloud iam service-accounts get-iam-policy "$SA"             # who may impersonate this SA
 gcloud projects get-ancestors "$P"                           # folder and org inheritance
-gcloud policy-troubleshoot iam "//cloudresourcemanager.googleapis.com/projects/$P" \
-  --principal-email="$SA" --permission=iam.serviceAccounts.actAs
+gcloud policy-troubleshoot iam "//iam.googleapis.com/projects/$P/serviceAccounts/$SA" \
+  --principal-email="<the identity you hold>" --permission=iam.serviceAccounts.actAs
+# actAs, getAccessToken, signJwt and signBlob are permissions on the *service-account* resource, so
+# troubleshoot them against the SA with yourself as the principal. Aimed at the project resource, or
+# with the target SA as the principal, it answers a question that is not the impersonation question.
 gcloud functions describe <name> --gen2 --format='value(serviceConfig.serviceAccountEmail)'
 ```
 

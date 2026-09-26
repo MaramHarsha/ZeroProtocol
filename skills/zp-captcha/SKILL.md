@@ -33,9 +33,17 @@ grep -oE 'name="[a-z_-]*captcha[a-z_-]*"|(data-sitekey|sitekey|site_key|render)=
 
 **2. Diff the sitekey against the vendors' published test keys - offline, zero requests.** Google's
 `6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI`, hCaptcha's `10000000-ffff-ffff-ffff-000000000001` and
-Turnstile's `1x00000000000000000000AA`, `1x00000000000000000000BB`, `2x00000000000000000000AB` and
-`3x00000000000000000000FF` are always-pass or always-block sandbox keys - any of them in production means the
-challenge is decoration, and their paired test secrets verify *any* token.
+Turnstile's `1x00000000000000000000AA` / `1x00000000000000000000BB` (always pass),
+`2x00000000000000000000AB` / `2x00000000000000000000BB` (always **block**) and
+`3x00000000000000000000FF` (forces an interactive challenge) are the vendors' sandbox **sitekeys**.
+
+One in production is a **lead, not the finding**. The sitekey is client-side; the verdict belongs to the
+**secret** on the server, so a dummy sitekey can sit in front of a real secret and every token then fails -
+and an always-block key breaks the form rather than opening it. It tells you which secret to suspect, and
+step 3 is still what confirms. Only the always-pass dummy *secrets* make verification a no-op: Turnstile
+`1x0000000000000000000000000000000AA`, hCaptcha `0x0000000000000000000000000000000000000000`, Google
+`6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe`. Turnstile's `2x0000000000000000000000000000000AA` is the
+always-*fail* secret and rejects everything.
 
 **3. Baseline, then the omission ladder.** Solve the challenge once yourself in `zp-browser`, keep the
 wire copy (`zp-proxy`), submit it, and **confirm the state actually changed** - without that baseline every status code below is unreadable.
@@ -48,7 +56,16 @@ probe(){ printf '%-28s ' "$1"; curl -sk -o /tmp/zp.body -w '%{http_code}  %{time
 probe "field omitted"          ""
 probe "empty, then 0/true/null" "&$F="
 probe "random, right shape"    "&$F=$(head -c 400 /dev/urandom | base64 -w0 | tr -d '=+/')"
-probe "hCaptcha test passcode" "&$F=10000000-aaaa-bbbb-cccc-000000000001"
+# vendor dummy response - only the one matching the field you read in step 1 means anything:
+#   h-captcha-response    -> hCaptcha's test passcode        cf-turnstile-response -> XXXX.DUMMY.TOKEN.XXXX
+#   g-recaptcha-response  -> no analogue; Google's test secret accepts *any* token, so the random probe
+#                            above already is the sandbox-secret test
+case $F in
+  h-captcha-response)    D=10000000-aaaa-bbbb-cccc-000000000001 ;;
+  cf-turnstile-response) D=XXXX.DUMMY.TOKEN.XXXX ;;
+  *)                     D= ;;
+esac
+[ -n "$D" ] && probe "vendor dummy response" "&$F=$D"
 ```
 
 Read `time_total` beside the code - a real `siteverify` is an outbound TLS round trip, typically 80-400 ms,
@@ -107,8 +124,10 @@ done
 Challenge appears at attempt N - you have the number, stop. Whether the counter is client-keyed is **one**
 further request with a fresh cookie jar, not a second loop.
 
-**8. Races in consumption** - validated, then consumed after slow downstream work. Concurrency 2-5, on
-disposable objects you own.
+**8. Races in consumption** - validated, then consumed after slow downstream work. **Two** concurrent
+requests, on a disposable object you own. Where you can, race a write you already hold - an
+idempotency-protected update - rather than signup, which also sends mail. If the token is only consumed
+at signup, two accounts is the ceiling: delete both and say so.
 
 ```bash
 python3 - <<'PY'
@@ -118,7 +137,7 @@ def fire(i):
     b = f"email=zp+r{i}@example.com&password=Zp-Probe-9134&g-recaptcha-response={TOK}".encode()
     try: return u.urlopen(u.Request(EP, b, {"Content-Type": "application/x-www-form-urlencoded"}), timeout=20).status
     except urllib.error.HTTPError as e: return e.code
-with cf.ThreadPoolExecutor(4) as x: print(sorted(x.map(fire, range(4))))
+with cf.ThreadPoolExecutor(2) as x: print(sorted(x.map(fire, range(2))))   # two, never more
 PY
 ```
 
@@ -145,12 +164,12 @@ created and say so.
 | Probe | Tests | Positive looks like |
 |---|---|---|
 | response field deleted from the body; then `=` empty, `0`, `true`, `null`, random base64 of the right length | verification absent entirely, then presence checked but content not | baseline status **and** the state changed, with no verify latency |
-| vendor test passcode `10000000-aaaa-bbbb-cccc-000000000001` | production secret is the vendor's sandbox secret | accepted |
-| sandbox sitekey in the page (step 2), or one solved token sent twice inside 120 s | always-pass key in prod; single-use unenforced | offline string match; both accepted |
+| the vendor's own dummy response, matched to the field (hCaptcha `10000000-aaaa-bbbb-cccc-000000000001`, Turnstile `XXXX.DUMMY.TOKEN.XXXX`; reCAPTCHA has none) | production secret is the vendor's always-pass sandbox secret | accepted |
+| sandbox sitekey in the page (step 2), or one solved token sent twice inside 120 s | which secret to suspect; single-use unenforced | offline string match - a lead step 3 must confirm; both accepted |
 | token used with session B's cookie, or sent to reset / signup / invite | bound to neither session nor action; v3 `action` and `hostname` unread | accepted |
 | same action on `/api/*`, `/mobile`, `/graphql`, a legacy version | control on the UI path only | no challenge, action succeeds |
 | `captcha_id` re-fetched, 10 images diffed, answer resubmitted | reusable id, finite or seeded answers | duplicates, or answer in metadata |
-| 2-5 concurrent requests sharing one token | consumption happens after the check | more than one success |
+| 2 concurrent requests sharing one token | consumption happens after the check | more than one success |
 | fresh cookie jar after the reactive threshold | counter keyed to client state | the count restarts |
 
 `curl`, `python3` and one browser session cover all of it; a scanner reporting "CAPTCHA missing" produces the first rows of the next table.
@@ -162,7 +181,8 @@ created and say so.
 | response omitted or garbage, request accepted, protected state **verifiably** changed | **confirmed - no server-side verification.** Medium by default; High only when it is the sole gate on login, OTP-send or paid compute **and** step 9 showed nothing else fires |
 | one solved token accepted twice inside its validity window, in another session, or on another action | confirmed - single-use unenforced, or the token is unbound. Same ceiling; name both endpoints |
 | UI path challenges, API / mobile / GraphQL path does not | confirmed, and the most commonly accepted shape. Severity from that endpoint's action |
-| vendor sandbox sitekey or secret live in production | confirmed - treat as no verification at all, and it is a one-line fix |
+| an always-pass sandbox **secret** live in production - leaked in a bundle, or proved by step 3 | confirmed - treat as no verification at all, and it is a one-line fix |
+| a sandbox **sitekey** in the page and nothing else | a lead, not a finding. Confirm with step 3 - the server's secret decides the verdict |
 | custom answer recoverable from the response, a cookie, image metadata or a finite set | confirmed. Medium - a design flaw, not a config slip |
 | two concurrent requests both consume one token | confirmed race - take the write-up shape from `zp-race` |
 | **you solved the challenge** - by hand, OCR, the audio track, or a paid solving service | **not a bypass. The control worked.** Killed, and a solving service is outside ZeroProtocol anyway - it proves nothing about the implementation and ships target data to a stranger |
@@ -189,7 +209,8 @@ captcha <endpoint>` before writing a word.
 
 - **Solving the challenge and calling it a bypass.** You proved the control works.
 - **Exercising what the control protected.** A wordlist, a farming loop, a scraping run or a repeated SMS send turns a valid report into unauthorized abuse.
-- **Unbounded loops on anything that mails, texts, renders or bills.** Two or three, to your own address, never in parallel.
+- **Unbounded loops on anything that mails, texts, renders or bills.** Two or three, to your own
+  address, serially - the only parallel request in this skill is step 8's two-request race.
 - **Believing a replay result on an expired token** (two minutes for reCAPTCHA - re-solve and retest), or letting the browser or an invisible-mode widget re-solve during a replay. Diff the wire copy and confirm the field really is absent.
 - **Guessing the field name** instead of reading the form, so the probe tests nothing; or testing with a real user's account, email or phone number, or leaving disposable accounts behind.
 - **Claiming High without step 9** - if a rate limiter or WAF catches it, the missing challenge changes little - or treating `cf_clearance` reuse, a generous v3 threshold, or "no CAPTCHA here" as bugs.

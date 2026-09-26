@@ -25,9 +25,16 @@ Every command below runs against `surface/in-scope.txt`, never `surface/hosts.tx
 bruteforced name "resolve", which silently poisons the whole phase.
 
 ```bash
-# wildcard test: three names that cannot exist
-for r in zzq1nonexistent zzq2nonexistent zzq3nonexistent; do dig +short "$r.$D"; done
-# all three return the same address => wildcard. Filter that address out of every result.
+# wildcard test: a name that cannot exist must come back NXDOMAIN. *Any* NOERROR answer is
+# a wildcard - a wildcard fronted by a CDN or an LB hands out a different, rotating address
+# set per query, so "the three replies differ" is not evidence that there is no wildcard.
+# Test every root in in-scope.txt and every label you intend to brute force under.
+for parent in $D dev.$D staging.$D api.$D; do
+  dig +noall +comments "zzq$RANDOM.$parent" | grep -q 'status: NXDOMAIN' \
+    || echo "WILDCARD at $parent"
+done
+# For each wildcard, record the full answer *set* (CNAME target plus addresses) and filter
+# results on the set, not on one address.
 
 dnsx -l surface/in-scope.txt -silent -a -cname -resp -json -o surface/dns.jsonl
 # fallback:
@@ -64,7 +71,7 @@ jq -r 'select(.status_code) | "\(.status_code) \(.url) \(.title // "-") \(.tech 
 |---|---|
 | 200 | the obvious surface. Also the least likely to be forgotten by the defenders |
 | 301/302 | follow it - the destination is often a different host, sometimes out of scope |
-| **401/403** | **a P1.** The route exists and is protected; authz is the whole game |
+| **401/403** | **the highest-value lead here.** The route exists and is protected; a bypass is the P1, the 401 itself is not a finding. Hand to `zp-authz` |
 | 404 on a host that resolves | still a live server. Content discovery belongs here |
 | 500/502/503 | a stack trace, a misconfigured origin, or an unfinished deploy |
 | 000 / timeout | filtered, dead, or your rate limit tripped. Distinguish before concluding |
@@ -149,12 +156,12 @@ leaked secret. A 401 on `/api/admin/` outranks a 200 on the marketing site.
 
 | Observation | Verdict |
 |---|---|
-| every bruteforced name resolves to one IP | wildcard DNS. Filter that IP; your list is fiction until you do |
+| a random name answers NOERROR at all | wildcard DNS, even if each reply differs. Filter the whole answer set; your list is fiction until you do |
 | host resolves but all ports closed | parked. Park it, do not claim coverage of it |
 | 403 from a WAF on every path | you are fingerprinting the WAF, not the app. Find the origin or slow down |
 | 200 with an identical body on every path | soft-404. Calibrate before content discovery, or every result is a false positive |
 | unauthenticated Redis/Mongo/ES/Docker | probably the top finding on the estate. One benign read, evidence, stop |
-| 401 on an API route | P1. Hand to `zp-authz` |
+| 401 on an API route | surface worth attacking, not a finding. Hand to `zp-authz` |
 | redirect leaves the scope | do not follow it with a payload. Note the destination host |
 | codes degrade as you scan | rate limit hit. Back off; results after that point are unreliable |
 

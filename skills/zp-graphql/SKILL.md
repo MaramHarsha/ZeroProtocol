@@ -27,8 +27,9 @@ for p in graphql api/graphql v1/graphql graphql/v1 query api/query gql \
 done
 ```
 
-`{"data":{"__typename":"Query"}}` is the confirmation. A `400` complaining about a missing query
-also confirms a GraphQL handler.
+A `data.__typename` in the reply is the confirmation - read the type name, do not match a fixed
+string: most servers answer `Query`, Hasura answers `query_root`. A `400` complaining about a
+missing query also confirms a GraphQL handler.
 
 **2. Introspect. If it is on, you have the entire surface for free.**
 
@@ -140,13 +141,28 @@ containing a cycle. Do not demonstrate the outage.
 | file upload via GraphQL | `multipart/form-data` spec -> `zp-upload` |
 | Hasura | `x-hasura-role`, `x-hasura-user-id` headers accepted from the client |
 
-Hasura deserves a specific note: if the server trusts a client-supplied `x-hasura-role: admin`
-header, that is instant full access. Test it.
+Hasura deserves a specific note, and a caution. The engine honours a client-supplied
+`x-hasura-role` only when the request is *already* trusted - it carries the admin secret, or the
+role is listed in the JWT's `x-hasura-allowed-roles` or the auth webhook's answer - or when no
+admin secret is configured at all, in which case every request is admin before you send a header.
+A `200` on `{__typename}` therefore proves nothing: the unauthenticated role answers it too. Prove
+the header changes what you can reach, with a differential:
 
 ```bash
-curl -sk -X POST "https://$H/v1/graphql" -H 'Content-Type: application/json' \
-  -H 'x-hasura-role: admin' -d '{"query":"{__typename}"}'
+Q='{"query":"{__schema{queryType{fields{name}}}}"}'
+for hdr in 'X-ZP-Probe: baseline' 'x-hasura-role: admin'; do
+  printf '%-28s ' "$hdr"
+  curl -sk -X POST "https://$H/v1/graphql" -H 'Content-Type: application/json' \
+    -H "$hdr" -d "$Q" \
+    | jq -c '{err:.errors[0].message, fields:(.data.__schema.queryType.fields//[]|length)}'
+done
 ```
+
+Equal field counts mean the header was ignored - killed. `Your requested role is not in allowed
+roles` is the same kill, stated out loud. A wider schema, or a table that only reads with the
+header, is the finding - and its root cause is a leaked `x-hasura-admin-secret`, an over-broad
+`x-hasura-allowed-roles` claim, or an engine deployed with no admin secret at all. Name that cause
+in the report; "the header was accepted" on its own is a false Critical.
 
 ---
 
@@ -157,7 +173,8 @@ curl -sk -X POST "https://$H/v1/graphql" -H 'Content-Type: application/json' \
 | mutation executes with a user token and takes effect | **confirmed BFLA.** High to Critical |
 | sensitive field returned for another user | confirmed field-level authz gap |
 | alias batching bypasses a rate limit | confirmed. Report the mechanism, 3-5 aliases as proof |
-| `x-hasura-role: admin` accepted | **Critical.** Full database access |
+| `x-hasura-role: admin` widens the schema or reads what the anon role cannot | **Critical.** Admin over the database - state the cause (leaked secret, over-broad allowed roles, no secret set) |
+| the same query answers identically with and without `x-hasura-role` | the header is ignored. Killed |
 | introspection enabled | information disclosure, Low on its own - the value is what you do with it |
 | suggestions leak field names | Low on its own; use it to find the real finding |
 | no depth/cost limit | Medium configuration finding. Never demonstrate the outage |

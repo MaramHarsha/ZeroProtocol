@@ -93,8 +93,10 @@ done   # then comma lists ("1.2.3.4, <your ip>") - some parsers read the first h
 # 5b. identifier keying - spellings a counter may treat as different keys for one account
 python3 -c 'b="zp+a1@example.com"; print([b, b.upper(), b+".", " "+b, b.replace("@","＠")])'
 # 5c. route keying, then client keying with a fresh jar, then the window
-for p in /api/login /api/login/ /API/login /api/./login /api/v1/../v1/login; do
-  printf '%-24s ' "$p"; curl -sk -o /dev/null -w '%{http_code}\n' --max-time 20 -X POST "https://$H$p" \
+# --path-as-is is load-bearing: without it curl squashes dot segments before it builds the request
+# line, so /api/./login and /api/v1/../v1/login go on the wire as the baseline path and test nothing
+for p in /api/login /api/login/ /API/login /api/./login /api/v1/../v1/login /api//login /api/%2e%2e%2flogin; do
+  printf '%-24s ' "$p"; curl --path-as-is -sk -o /dev/null -w '%{http_code}\n' --max-time 20 -X POST "https://$H$p" \
     -H 'Content-Type: application/json' --data-raw "{\"email\":\"$ME\",\"password\":\"$BAD\"}"
 done
 ```
@@ -145,7 +147,7 @@ from **arithmetic stated in the report** - keyspace, throughput, code lifetime -
 | 12 attempts, one fixed invalid value | throttle, lockout, challenge or nothing | identical status, size and latency throughout |
 | known-good value after the probe | shadow throttling | it still authenticates - the attempts were real |
 | `X-Forwarded-For` and friends, one per request | limit keyed to a client-controlled hop | the 429 you already earned disappears |
-| `/api/login/`, `/API/login`, an upper-cased or padded identifier, a fresh cookie jar, a 60 s wait | limiter keyed to a literal route, a raw string, client state or a window | the count restarts while the handler still works |
+| `/api/login/`, `/API/login`, a `%2e%2e%2f` or `//` path (`--path-as-is`), an upper-cased or padded identifier, a fresh cookie jar, a 60 s wait | limiter keyed to a literal route, a raw string, client state or a window | the count restarts while the handler still works |
 | 3 aliases of one mutation in one POST, or a 3-item array batch | operations counted per request | 3 independent results, 1 decrement |
 | 3 sends to your own address on any resend button | per-message cost unmetered | three messages, no cooldown |
 | same operation on `/api/v1`, `/mobile`, the GraphQL mutation | limiter on the web path only | the quiet path takes attempt after attempt |

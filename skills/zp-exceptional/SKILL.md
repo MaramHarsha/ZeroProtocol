@@ -52,8 +52,15 @@ can be made to disagree (`zp-semantic-confusion`).
 ```bash
 send "$A" '{"quantity":1,"quantity":9999}'; send "$A" '{"quantity":1,"QUANTITY":9999}'
 send "$A" '{"quantity":1,"coupon":"SPRING"'                       # truncated - unterminated object
-curl -sk -o /dev/null -w '%{http_code}\n' -X POST "$EP" -H "$A" --data-binary '{"quantity":1}' # no CT
+curl -sk -o /dev/null -w '%{http_code}\n' -X POST "$EP" -H "$A" --data-binary '{"quantity":1}'
+curl -sk -o /dev/null -w '%{http_code}\n' -X POST "$EP" -H "$A" -H 'Content-Type:' --data-binary '{"quantity":1}'
 ```
+
+Those last two are **different probes.** `curl` attaches `Content-Type: application/x-www-form-urlencoded`
+to any `-d`/`--data-binary` body unless told otherwise, so the first is the *wrong*-type case; only the
+bare-colon `-H 'Content-Type:'` puts the request on the wire with **no** `Content-Type` at all (both
+captured on a loopback listener, curl 8.5.0 - and note `-H 'Content-Type;'` is a third thing again, an
+*empty* header). Never write "the API accepted the body with no Content-Type" off the first form.
 
 **3. Truncate the body on the wire - one connection, then close it.** A `Content-Length` the sender
 never satisfies is where framework and application disagree about whether a request happened.
@@ -139,7 +146,7 @@ another tenant's error revealed, or keep a privileged object a fail-open created
 | field as `[]`, `{}`, `true`, `null`, `""` | wrong-type handling before the authorization check | uncaught exception, or the write happening anyway |
 | `0`, `-1`, `-0.0`, `2**63`, `Infinity` | sign and range assumptions, overflow, float coercion | negative total, free order, wrapped identifier |
 | duplicate and case-variant keys | two parsers, two winners | one component validates value A, another uses value B |
-| truncated JSON, stray brace, wrong or missing `Content-Type` | body parser vs route middleware ordering | `500` from inside the handler, or a partial write |
+| truncated JSON, stray brace, wrong `Content-Type` vs none at all (`-H 'Content-Type:'`) | body parser vs route middleware ordering | `500` from inside the handler, or a partial write |
 | `\u0000`, `\r\n`, `U+202E`, unpaired surrogate, over-long UTF-8 | normalisation and encoding round-trips | value truncated at the null, split header, two stored forms |
 | step out of order, step repeated, step token reused elsewhere | state-machine enforcement | an object in a state the UI cannot produce |
 | nesting depth 20 -> 60 -> 200, once each | parser depth cap | `500` or a step change in `time_total` - **report, do not scale** |

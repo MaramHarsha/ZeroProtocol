@@ -1,18 +1,22 @@
 ---
 name: zp-ldap-xpath
-description: ZeroProtocol hunter for injection into query languages other than SQL - LDAP search filters and DNs, XPath and XQuery, SPARQL, Lucene and Elasticsearch, and MongoDB $where. Use when a login, people-search or faceted-search feature sits on a directory or XML store, when javax.naming or a filter-syntax error appears in a response, or when a tenant clause is concatenated into a query. These grammars have no comment token, so the proof is a balanced always-true expression plus a negative control.
+description: ZeroProtocol hunter for injection into query languages other than SQL - LDAP search filters and DNs, XPath and XQuery, SPARQL, Lucene and Elasticsearch, and MongoDB $where. Use when a login, people-search or faceted-search feature sits on a directory or XML store, when javax.naming or a filter-syntax error appears in a response, or when a tenant clause is concatenated into a query. LDAP filters, XPath 1.0 and Lucene have no comment token (SPARQL and XQuery do), so the proof is a balanced always-true expression plus a negative control.
 ---
 
-# zp-ldap-xpath - no comment token, so balance it
+# zp-ldap-xpath - mostly no comment token, so balance it
 
 **Phase:** 5 | **Gate:** **active.** `zp-scope check <target>` must exit 0 before any request.
 Exit 1 refuse and name the pattern · 3 stop · 4 stop.
 
-SQL lets you `--` the rest of the query away. LDAP, XPath, XQuery, SPARQL and Lucene do not - your
-input must leave the expression **syntactically whole** or the server throws a parse error instead of
-executing. That constraint is also the detector: an **unbalanced** probe that errors beside a
-**balanced always-true** probe that authenticates is the finding. Either half alone is a guess - a 500
-on a stray `)` is a parse error, not a bypass.
+SQL lets you `--` the rest of the query away. **LDAP search filters, XPath 1.0 and Lucene** have no
+comment token at all, so your input must leave the expression **syntactically whole** or the server
+throws a parse error instead of executing. Two of the five do have one and you should use it:
+SPARQL takes `#` to end of line (outside IRIs and strings) and XQuery/XPath 3.0 take `(: ... :)` -
+that is the cheapest way to swallow the rest of a concatenated query on those endpoints.
+
+Where there is no comment token, that constraint is also the detector: an **unbalanced** probe that
+errors beside a **balanced always-true** probe that authenticates is the finding. Either half alone is
+a guess - a 500 on a stray `)` is a parse error, not a bypass.
 
 ---
 
@@ -42,7 +46,14 @@ grep -oiE 'javax\.naming[.A-Za-z]*|InvalidSearchFilter[A-Za-z]*|Bad search filte
 ```bash
 for c in ')' '(' '*' '\' '&' '|' '!' "'" ']' '}' '"' '/' '%00'; do printf '%-6s ' "$c"
   probe "$(python3 -c 'import json,sys;print(json.dumps({"username":"zpuser"+sys.argv[1],"password":"x"}))' "$c")"; done
+printf '%-6s ' 'NUL'      # the real NUL - argv cannot carry one, so let json.dumps emit the escape
+probe "$(python3 -c 'import json;print(json.dumps({"username":"zpuser\u0000","password":"x"}))')"
 ```
+
+The `%00` row is a **double-decode** probe, not the NUL probe: the value goes into a JSON body with
+`--data-raw`, so the target receives the three literal characters `%`, `0`, `0` and nothing decodes
+them. The NUL-truncation case - the one that makes a trailing LDAP clause disappear - needs the
+`\u0000` line, which the target's JSON parser turns into a real NUL byte.
 
 A safe app escapes all of them and every line matches baseline. **One character that moves the status,
 the length or the error while its balanced partner does not** is the injection point.
@@ -56,19 +67,30 @@ the length or the error while its balanced partner does not** is the injection p
 | XPath predicate / XQuery FLWOR | `//user[name/text()='X']` | `' " ] [ ( ) \| and or`, plus `{ } , ;` in XQuery |
 | SPARQL / Lucene `query_string` | `{ ?s :name "X" }` · `tenant:7 AND body:X` | `" } { . ; UNION SERVICE` · `: ( ) " && \|\| ! ^ ~ * ?` |
 
-**4. Auth bypass - balanced, with the negative control in the same loop.** Count parentheses of the
-*resulting* filter, not of your payload - against `(&(uid=INPUT)(userPassword=PASS))` only the
-self-balancing form lands at depth 0; add or drop trailing `)` on the others until they do too.
+**4. Auth bypass - balanced, with the negative control in the same loop.** What must balance is the
+prefix you inject: it has to **close the clauses it opened, up to the first complete filter**. What
+follows - the remainder of the app's own filter - becomes trailing junk, and whether the server
+accepts it is implementation-dependent. Many LDAP call sites (PHP `ldap_search`, JNDI) parse the
+first complete filter and drop the rest, which is precisely why this class works.
 
 ```bash
 balance(){ python3 -c 'import sys,re;s=sys.argv[1];u=re.sub(r"\\.","",s)
-print(f"{s!r:46} depth={u.count(chr(40))-u.count(chr(41))}")' "$1"; }   # depth 0 or it parse-errors
+print(f"{s!r:46} depth={u.count(chr(40))-u.count(chr(41))}")' "$1"; }   # a diagnostic, not a pass/fail
 for p in 'zpuser)(|(uid=*' '*)(uid=*))(|(uid=*' 'zpuser)(!(userPassword=zpNOSUCHVALUE))' 'zpuser*' \
          'zpuser)(|(uid=zpNOSUCHUSER'; do
   balance "$(printf '(&(uid=%s)(userPassword=wrong))' "$p")"
   printf '  -> '; probe "$(python3 -c 'import json,sys;print(json.dumps({"username":sys.argv[1],"password":"wrong"}))' "$p")"
 done
 ```
+
+**Do not "fix" these payloads to reach depth 0.** Run `balance` and you get `+1`, `0`, `-1`, `0`,
+`+1` across those five against that template - three of the five would be condemned by a depth-0
+rule, and adding or dropping a trailing `)` destroys them. Depth 0 is not sufficient either: the
+one depth-0 bypass yields `(&(uid=*)(uid=*))(|(uid=*)(userPassword=wrong))`, two concatenated
+top-level filters rather than one valid filter. Use the depth only to see *what shape* you handed
+the server. A parse error on the trailing remainder is itself a fingerprint - a strict parser - and
+the answer to it is NUL truncation (step 2) or the absolute-filter forms `(&)` / `(|)`, not a
+reshuffled paren.
 
 The last payload is the **negative control** - identically shaped, logically false, and it must fail.
 If true-shaped and false-shaped both "succeed", the endpoint is broken, not injectable.
@@ -104,7 +126,11 @@ ldapsearch -x -H ldap://$OWN_LDAP -D "cn=zp,dc=lab,dc=local" -w "$PW" -b "dc=lab
 xmllint --xpath "//user[name='admin' or '1'='1']" local.xml      # or python3 -c 'from lxml import etree'
 ```
 
-`xmllint` and stdlib `xml.etree` cover only part of XPath, so an error there means your brackets are unbalanced, not that the target would reject it; `lxml`'s `etree.XPath` has the full grammar.
+`xmllint` and `lxml` are the **same engine** - both are libxml2 - so both give you complete XPath 1.0
+and no XPath 2.0; an error from either on a 1.0 expression means your brackets really are unbalanced.
+Stdlib `xml.etree` is a small subset that rejects `and`/`or` predicates and `text()` comparisons
+outright, so the step-4 payloads cannot be adjudicated there at all. To arbitrate XPath 2.0 / XQuery
+locally - `fn:doc`, FLWOR - you need Saxon-HE, BaseX or eXist.
 
 **7. Out-of-band, where the language offers it.** LDAP filters have **no** outbound primitive - do not
 promise one. An OOB hit is decisive for an otherwise blind case.
@@ -183,7 +209,8 @@ nothing interesting; check what you became before writing "admin takeover".
   error marks you as someone who has not tested a directory.
 - **Reporting a parse error as a bypass**, or skipping the negative control. **Mixing up search-filter
   and DN context** - `*` is a wildcard in a filter and a literal in a DN.
-- **Reaching for a comment token.** There is none in LDAP, XPath, XQuery, SPARQL or Lucene.
+- **Reaching for a comment token where there is none** - LDAP filters, XPath 1.0 and Lucene. But do
+  reach for it on SPARQL (`#`) and XQuery (`(: :)`); the payload table uses both.
 - **Letting the HTTP client re-encode the payload.** Use `--data-raw` / `--data-binary`;
   `--data-urlencode` double-encodes the `%00` and `%5c` probes that test escape handling.
 - **Enumerating a directory and then spraying the usernames.** Credential guessing is out of scope in

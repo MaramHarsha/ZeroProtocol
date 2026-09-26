@@ -118,8 +118,12 @@ for pw in 'true' '0' '[]' '{"x":1}'; do printf '%-8s ' "$pw"; curl -sk -o /dev/n
   -X POST "https://$H/api/login" -H 'Content-Type: application/json' -d "{\"email\":\"zp@example.com\",\"password\":$pw}"; done
 ```
 
-`SQLSTATE[42000]` or an `Illuminate\Database\QueryException` is the sink - `zp-sqli` takes it from there. Type confusion is **version-gated**: `0 == "abc"` is true on PHP 7 and false on PHP 8, so `0e…` magic
-hashes (`240610708`, `QNKCDZO`) bypass `md5($in) == $hash` only on PHP 7 and below. Check `X-Powered-By` first, aim at a token or hash comparison, never at `Hash::check`.
+`SQLSTATE[42000]` or an `Illuminate\Database\QueryException` is the sink - `zp-sqli` takes it from there. Two different bugs, only one of them version-gated. **Int-vs-string** juggling (`0 == "abc"` true,
+`"password":0` matching a hash) is PHP 7 and below - PHP 8's saner-comparisons RFC fixed number against
+non-numeric string, so check `X-Powered-By` before spending requests on it. **`0e…` magic hashes**
+(`240610708`, `QNKCDZO`) are **not** version-gated: `md5($in) == $hash` compares two *strings*, both
+numeric, so PHP still compares them numerically and `0e123… == 0e456…` is true on 8.x as it was on 5.x.
+Only `hash_equals()` or `===` closes it. Aim at a token or hash comparison, never at `Hash::check`.
 
 **9. Stop point - state it in the report.** You stop at the first response proving the boundary is gone: the `.env` body, the debug page, the dashboard's data, your own decrypted cookie, the extra column on your own record, the SQL error.
 You do **not** run `laravel-exploits`, `phpggc` or `laravel-crypto-killer` payload generation at the target, poison `storage/logs/laravel.log`, forge a session or signed URL for an account you do not own,

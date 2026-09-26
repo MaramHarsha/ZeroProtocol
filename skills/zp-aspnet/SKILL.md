@@ -39,8 +39,10 @@ for p in /trace.axd /elmah.axd /elmah.axd/download /glimpse.axd /ChartImg.axd /T
 ```
 
 Calibrate against a path you invented - IIS answers `200` with a friendly error page constantly, so **size and
-content-type decide, never the status code**. A `403` on `trace.axd` can still open when the app trusts
-`X-Forwarded-For` over the socket peer. `elmah.axd/download` streams the *whole* log as CSV - first line, then stop.
+content-type decide, never the status code**. A `403` on `trace.axd` is normally a kill: `<trace localOnly="true">`
+is decided by `HttpRequest.IsLocal`, i.e. the socket peer, and classic ASP.NET never consults
+`X-Forwarded-For` for it. The header only ever flips the handler where an upstream (ARR, a custom
+module) rewrites `REMOTE_ADDR`, or where the app reads XFF into an authorization check of its own. `elmah.axd/download` streams the *whole* log as CSV - first line, then stop.
 
 **3. ViewState posture, then prove any recovered `machineKey` offline.** `__VIEWSTATE` decoding to `ff01` is a plaintext
 `ObjectStateFormatter` stream, and `__VIEWSTATEENCRYPTED` is rendered **only when ViewState is encrypted**, and its value is
@@ -48,9 +50,15 @@ always empty - so the field's **presence** means encrypted (needs `decryptionKey
 `validationKey`), and its **absence** means MAC-only, where `validationKey` alone forges it.
 Reading the empty value as "signed only" inverts the test and sends you after the wrong key. Keys leak from a served
 `web.config`, `elmah.axd`, or a repo or vendor DLL (`zp-code-audit`, `zp-js-secrets`); recompute the MAC over the ViewState **the server itself issued** - zero extra requests, unambiguous.
+Take the generator from **that page**. It is per-page and per-application, so a value copied from a
+write-up feeds the wrong modifier into every HMAC and the script reports "wrong key" over a key that is
+in fact live - the one way this check produces a false kill on a Critical. Where the field is absent the
+`none` row below is the real answer.
 
 ```bash
-VS=$(grep -oP '(?<=__VIEWSTATE" value=")[^"]*' /tmp/zp.aspx); VSG=CA0B0334; VK='PASTE_VALIDATIONKEY_HEX'
+VS=$(grep -oP '(?<=__VIEWSTATE" value=")[^"]*' /tmp/zp.aspx)
+VSG=$(grep -oP '(?<=__VIEWSTATEGENERATOR" value=")[^"]*' /tmp/zp.aspx); VSG=${VSG:-00000000}
+VK='PASTE_VALIDATIONKEY_HEX'
 python3 - "$VS" "$VSG" "$VK" <<'PY'
 import base64, binascii, hmac, hashlib, sys
 vs = base64.b64decode(sys.argv[1]); mod = binascii.unhexlify(sys.argv[2]); key = binascii.unhexlify(sys.argv[3])
@@ -173,7 +181,7 @@ ViewState, write an `.aspx` or any webshell, upload through a Telerik `RadAsyncU
 | `__VIEWSTATEENCRYPTED` empty and **no** key recovered | **primitive only. Low to Medium** - a hardening finding, not RCE. This is the line most reports in this class cross |
 | `Validation of viewstate MAC failed` plus the web-farm sentence | unsynced `machineKey` across nodes - topology disclosure, **Low**, and an availability bug for real users |
 | the two-parser differential alone, or `X-AspNet-Version` and a version banner in a 500 | **not findings** - the differential is a note in the report body, and the banners are Informational and the most-duplicated ASP.NET report there is. Check `zp-intel` |
-| short names that all resolve to linked public files, a uniform `404`/`400` across both wildcards, `403` on the `.axd` viewers, or a padding-oracle split | **killed** - the name leak counts only for an unlinked file and only once you see the split; the viewers are gated unless `X-Forwarded-For` flips them; MS10-070 has been patched 15 years, so reproduce twice or drop it |
+| short names that all resolve to linked public files, a uniform `404`/`400` across both wildcards, `403` on the `.axd` viewers, or a padding-oracle split | **killed** - the name leak counts only for an unlinked file and only once you see the split; the `.axd` viewers are gated on the socket peer, and `X-Forwarded-For` reaches them only through an upstream that rewrites `REMOTE_ADDR`; MS10-070 has been patched 15 years, so reproduce twice or drop it |
 | `WWW-Authenticate: NTLM` with no AV_PAIR beyond the host you already had | **Informational** - the challenge is RFC behaviour. Only a forest root or a default hostname earns Low-Medium |
 | any of the above on a host `zp-scope check` did not allow | **not yours.** Stop and re-run the gate |
 

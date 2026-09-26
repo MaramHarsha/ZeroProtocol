@@ -77,7 +77,11 @@ grep -rhoE 'uses: *[A-Za-z0-9_.-]+/' .github/workflows/ | awk -F'[ /]' '{print $
   | while read -r o; do printf '%-22s %s\n' "$o" "$(curl -s -o /dev/null -w '%{http_code}' "https://github.com/$o")"; done
 ```
 
-No top-level `permissions:` means the repo default applies, which on older repos is `contents: write`. A `404`
+No top-level `permissions:` means the repo/org default applies. On the **permissive** default that is
+read/**write** on nearly every scope - contents, packages, pull-requests, issues, deployments, actions, checks,
+statuses, pages - with `id-token` the exception, still needing an explicit `id-token: write`. `packages: write`
+is often the worst of it: a poisoned image published to the org's own registry. Check
+Settings > Actions > Workflow permissions, and name every writable scope in the report. A `404`
 owner is **repojacking** - the namespace is free and every build pinned to it is one registration away from arbitrary code. Report it; **do not register the name.**
 
 **6. Identify runners from runs that already happened.** No execution, no PR.
@@ -109,11 +113,23 @@ does anything before `::add-mask::`. `upload-artifact` masks nothing - an artifa
 ```bash
 curl -s "https://hub.docker.com/v2/repositories/$ORG/?page_size=100" | jq -r '.results[].name'
 TOK=$(curl -s "https://ghcr.io/token?scope=repository:$ORG/$IMG:pull&service=ghcr.io" | jq -r .token)
-curl -s -H "Authorization: Bearer $TOK" -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
-     "https://ghcr.io/v2/$ORG/$IMG/manifests/latest" | jq '.config.digest, .layers[].size'
-docker history --no-trunc "$ORG/$IMG:latest" | grep -iE 'ARG|ENV|token|secret|password|key'
+A='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+man() { curl -s -H "Authorization: Bearer $TOK" -H "Accept: $A" "https://ghcr.io/v2/$ORG/$IMG/manifests/$1"; }
+M=$(man latest)
+D=$(printf '%s' "$M" | jq -r 'if .manifests then .manifests[0].digest else empty end')  # multi-arch?
+[ -n "$D" ] && M=$(man "$D")
+printf '%s' "$M" | jq '.config.digest, .layers[].size'
 crane config "ghcr.io/$ORG/$IMG:latest" | jq -r '.history[].created_by'   # no docker daemon needed
 ```
+
+Most `:latest` tags are **multi-architecture**, so the tag resolves to an OCI image index or a Docker
+manifest list - neither of which has `.config` or `.layers`. Ask for only the single-manifest type and a
+strict registry answers `404 MANIFEST_UNKNOWN` for an image that is plainly there, while a lenient one
+hands you the index and `jq '.layers[].size'` dies on `Cannot iterate over null`. Accept all four media
+types, then follow `.manifests[0].digest` to a real manifest. Read layer history with `crane config`,
+which fetches it remotely - `docker history` reads only an image already on your disk, so it silently
+implies a `docker pull`, and pulling is past this pack's stop point (`zp-cloud`: pulling images from an
+open registry is usually beyond what the program authorized).
 
 **9. Dependency confusion - three conditions, and you publish nothing.**
 

@@ -21,12 +21,18 @@ visitor downloads.
 ```bash
 mkdir -p js && cd js
 katana -u "https://$H/" -silent -jc -kf all -d 3 -rl "$RPS" | grep -Ei '\.m?js' | sort -u > ../js-urls.txt
-# fallback: pull them out of the HTML and the archive corpus
-curl -sk "https://$H/" | grep -oE 'src="[^"]+\.m?js[^"]*"' | cut -d'"' -f2 >> ../js-urls.txt
+# fallback: pull them out of the HTML and the archive corpus. `src=` is nearly always
+# relative or root-relative, so absolutise it against the page URL - curl exits 3 on a bare
+# `/static/js/main.js` and writes nothing, so the whole fallback fails silently otherwise.
+curl -sk "https://$H/" | grep -oE 'src="[^"]+\.m?js[^"]*"' | cut -d'"' -f2 \
+  | python3 -c 'import sys,urllib.parse as u
+[print(u.urljoin(sys.argv[1], l.strip())) for l in sys.stdin if l.strip()]' "https://$H/" \
+  >> ../js-urls.txt
 grep -Ei '\.m?js([?#]|$)' ../surface/urls.txt >> ../js-urls.txt
 sort -u ../js-urls.txt -o ../js-urls.txt
 
 while read -r u; do
+  case "$u" in http://*|https://*) ;; *) echo "skipped, not absolute: $u" >&2; continue ;; esac
   curl -sk --max-time 20 "$u" -o "$(echo "$u" | md5sum | cut -c1-12).js"
 done < ../js-urls.txt
 ```
@@ -36,20 +42,33 @@ original, readable, commented source.
 
 ```bash
 for f in *.js; do
-  m=$(tail -c 300 "$f" | grep -oE 'sourceMappingURL=[^[:space:]*]+' | cut -d= -f2)
+  # strip the prefix with sed, never `cut -d= -f2`: that keeps one field, so
+  # `main.js.map?v=2` becomes `main.js.map?v` and the map then looks absent
+  m=$(tail -c 300 "$f" | grep -oE 'sourceMappingURL=[^[:space:]*]+' | sed 's/^sourceMappingURL=//')
   [ -n "$m" ] && echo "$f -> $m"
 done
+# a `data:application/json;base64,` map is already in your hands - decode it, do not fetch it
 curl -sk "https://$H/static/js/main.abc123.js.map" -o main.map
-# unpack every original file with stdlib only
+# unpack every original file with stdlib only. Two things the naive version gets wrong:
+# index maps put the content in `sections[].map`, and `sources` is data the target wrote -
+# a single-pass .replace("../","") is not a traversal filter, so confine every write.
 python3 - main.map <<'PY'
 import json, os, sys
 m = json.load(open(sys.argv[1]))
-for name, src in zip(m.get("sources", []), m.get("sourcesContent") or []):
-    if not src: continue
-    p = "src/" + name.replace("../", "").replace("webpack://", "").lstrip("/")
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    open(p, "w", encoding="utf-8").write(src)
-    print(p)
+maps = [s["map"] for s in m["sections"]] if m.get("sections") else [m]
+base, n = os.path.abspath("src"), 0
+for sm in maps:
+    if not sm.get("sourcesContent"):
+        print("this map section carries no sourcesContent", file=sys.stderr)
+    for name, src in zip(sm.get("sources", []), sm.get("sourcesContent") or []):
+        if not src: continue
+        p = os.path.abspath(os.path.join(base, name.split("://", 1)[-1].lstrip("/")))
+        if not p.startswith(base + os.sep):
+            print("skipped traversal:", name, file=sys.stderr); continue
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write(src); n += 1
+        print(os.path.relpath(p))
+print(f"{n} original file(s) recovered", file=sys.stderr)
 PY
 ```
 
@@ -62,8 +81,9 @@ build pipelines often ship the map and only strip the comment.
 cat *.js | grep -oE '"(/[a-zA-Z0-9_/.{}$-]{2,80})"' | tr -d '"' | sort -u > ../js-endpoints.txt
 cat *.js | grep -oE 'https?://[a-zA-Z0-9._-]+\.[a-z]{2,}[a-zA-Z0-9._/-]*' | sort -u > ../js-hosts.txt
 cat *.js | grep -oE '(fetch|axios\.[a-z]+|\$\.(get|post|ajax)|XMLHttpRequest)[^;]{0,160}' | sort -u
-# with tooling:
-jsluice urls -i ../js-urls.txt ; jsluice secrets -i ../js-urls.txt
+# with tooling - jsluice is a JS parser and fetches nothing, so give it the bundles you
+# already downloaded rather than the URL list (check the flags with `jsluice --help` first):
+jsluice urls *.js ; jsluice secrets *.js
 ```
 
 New hostnames go through `zp-scope` for an ownership decision. New paths go to
@@ -95,9 +115,16 @@ trufflehog filesystem . --no-verification        # NEVER --only-verified: its ve
 | AWS `AKIA` | **do not call AWS.** Report the exposure and let the owner rotate | Critical - assume full compromise |
 | Stripe `sk_live` | do not call it | Critical |
 | GitHub token | do not call it | High-Critical depending on org scope |
-| JWT in source | decode the payload offline (`base64 -d`), read `exp`/`scope` | depends on claims; expired = informational |
+| JWT in source | decode the payload offline (base64**url**, see below), read `exp`/`scope` | depends on claims; expired = informational |
 | Firebase config | public by design - check the **rules**, not the key | the finding is open rules, not the key |
 | Algolia/Sentry public keys | public by design | not a finding unless it is the admin key |
+
+JWT segments are base64URL and unpadded, so `base64 -d` dies part-way through the claim
+set and the token looks malformed. Translate the alphabet and pad it:
+
+```bash
+python3 -c "import base64,json,sys;s=sys.argv[1];print(json.loads(base64.urlsafe_b64decode(s+'='*(-len(s)%4))))" "$SEG"
+```
 
 **Never authenticate with a credential you found.** Finding it is the bug; using it is
 unauthorized access. Report the exposure, the location, and the minimum proof of validity
@@ -107,7 +134,10 @@ it was served from.
 **6. Find the DOM sinks while you are in here.** This is free `zp-xss` input.
 
 ```bash
-grep -nE 'innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|setTimeout\((?!.*function)' *.js
+# `-E` is POSIX ERE and has no lookahead: `(?!...)` makes GNU grep warn and silently match
+# the wrong thing, and makes ugrep reject the whole pattern. Match a string first argument -
+# that is the sink - or use `grep -nP` if PCRE is available.
+grep -nE 'innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|setTimeout\(\s*["'\''`]' *.js
 grep -nE 'location\.(hash|search|href)|document\.referrer|window\.name|postMessage' *.js
 grep -nE 'addEventListener\(\s*["'\'']message' *.js     # postMessage handlers
 grep -nE '\.origin\s*(==|===|!=|!==)|indexOf\(.*origin|origin\.includes' *.js  # weak origin checks
@@ -121,12 +151,21 @@ A `message` listener with no `event.origin` check, or one that checks with `inde
 ```bash
 grep -hoE '"@[a-z0-9-]+/[a-z0-9._-]+"' *.js package.json 2>/dev/null | tr -d '"' | sort -u | while read -r p; do
   code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$p")
-  [ "$code" = "404" ] && echo "UNCLAIMED on npm: $p"
+  [ "$code" = "404" ] && echo "candidate - package document absent: $p"
 done
+# A 404 on `@scope/pkg` only says that package was never published. If the organisation
+# holds `@scope`, every unpublished name under it 404s and nobody outside can publish there,
+# so that 404 alone is an informative-closed report. Test the scope itself:
+s=@acme
+curl -s "https://registry.npmjs.org/-/v1/search?text=scope:${s#@}&size=1" | jq '.total'
 ```
 
-An unclaimed internal scope is a supply-chain finding. **Report it; do not publish a
-package to prove it.** Claiming the name is an attack on the build pipeline, not a PoC.
+`total: 0` - no package has ever been published under the scope - plus an organisation name
+still available on npm (check it in an account you own; npm refuses to create one that
+exists) is the claimable case, and so is an **unscoped** internal name that 404s. An
+unpublished name under a scope the target owns is not a finding. Say in the report which
+check you ran. **Report it; do not publish a package to prove it.** Claiming the name is an
+attack on the build pipeline, not a PoC.
 
 ---
 

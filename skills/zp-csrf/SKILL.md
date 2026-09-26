@@ -34,9 +34,15 @@ curl -sk -D - -o /dev/null -b cookies.txt -c cookies.txt "https://$H/dashboard" 
 | `SameSite=Lax` | top-level `GET` navigation only | needs a `GET` state change (step 5) or a same-site stage (step 7) |
 | `SameSite=Strict` | nothing cross-site | needs a same-site stage - subdomain XSS or takeover - or it is killed |
 | `Authorization` header, no cookie | nothing is ambient | **killed.** The browser never attaches it |
-| `__Host-` prefixed | host-only, no `Domain` sharing | cookie-tossing bypasses (step 6) are closed |
+| `__Host-` prefixed | exactly what its own `SameSite` value allows - the prefix governs who may **set** the cookie, never what crosses. Read the attribute and use the row above | host-only, so cookie-tossing (step 6) is closed. Not a CSRF control on its own |
 
-Chrome's old two-minute "Lax+POST" exemption was removed years ago - never build a report on it.
+Chromium still ships the two-minute "Lax-allow-unsafe" intervention - it is gated behind the
+`SameSiteDefaultChecksMethodRigorously` feature, which is off by default, so a cookie with **no**
+`SameSite` attribute and less than two minutes old does cross on a top-level cross-site `POST`.
+That is a live shape: a session cookie freshly minted by a login or SSO redirect, forged within
+the window by an auto-submitting top-level form. Treat it as an intervention that can be switched
+on in any release - prove it in the browser build you name in the report, and never present it as
+durable behaviour.
 
 **2. Inventory the state changes worth forging** from the `zp-proxy` corpus or the surface map. The
 endpoint matters far more than the payload.
@@ -140,13 +146,20 @@ data the forged request unlocks - that is a separate report through `zp-triage`.
 | token from your second account | tokens not bound to the session | same - file as "token not session-bound" |
 | `Origin` omitted, or `null` from `<iframe sandbox="allow-forms allow-scripts">` | presence-only origin checks | accepted - now find the real delivery path |
 | `<form enctype="text/plain">` with `name='{"email":"a@b.c","x":"' value='"}'` | Content-Type not enforced on a JSON route | valid JSON reaches the handler from a form |
-| `<img src="https://$H/api/x?...">`, or `_method=DELETE` / `X-HTTP-Method-Override: PUT` in a form POST | `GET` state change with a Lax cookie; method-based routing or verb-scoped middleware | state changed with no script; a protected verb reached from a form |
+| `<img src="https://$H/api/x?...">` - a subresource, so **only** with `SameSite=None` or no attribute | `GET` state change reachable without script | state changed from a page that ran no JavaScript |
+| the same URL as a top-level cross-site navigation - `window.open()`, a clicked link, `<meta http-equiv=refresh>`, a 302 from your page | `GET` state change with a `SameSite=Lax` cookie, which no subresource request can carry | state changed once the navigation lands |
+| `_method=DELETE` or `X-HTTP-Method-Override: PUT` in a form POST | method-based routing, or middleware scoped to the outer verb | a protected verb reached from a form |
 | `/setup/api/start/..%2f..%2fadmin%2fusers` | token middleware scoped by the pre-normalisation path | protected route executes, no token sent |
-| GraphQL `?query=mutation{...}` over `GET` | CSRF check skipped for `GET`, mutations allowed anyway | mutation executes - `zp-graphql` |
-| `new WebSocket("wss://$H/hubs/x")` from a foreign page | the upgrade cannot carry a custom header, so the check was dropped | `101` plus a state-changing frame - `zp-websocket` |
+| GraphQL `?query=mutation{...}` over `GET` (top-level navigation if the cookie is Lax) | CSRF check skipped for `GET`, mutations allowed anyway | mutation executes - `zp-graphql` |
+| `new WebSocket("wss://$H/hubs/x")` from a foreign page - the handshake is not a navigation, so the cookie must be `SameSite=None` or absent; Lax and Strict both block it | the upgrade cannot carry a custom header, so the check was dropped | `101` **carrying your session**, then a state-changing frame - `zp-websocket` |
 | OAuth callback replayed with a fixed or absent `state` | `state` is structurally the CSRF token of the link flow | your identity attached to another account - `zp-jwt-oauth` |
 
-No-tool fallback is `curl` plus `python3` (`http.cookies.SimpleCookie` parses `Set-Cookie` exactly);
+No-tool fallback is `curl` plus `python3`, reading `Set-Cookie` with the `grep -i '^set-cookie'`
+pass of step 1 - **not** `http.cookies.SimpleCookie`, which discards a whole cookie silently when
+it meets an attribute it does not know: `session=abc; Partitioned; Secure; SameSite=None; Path=/`
+parses to `{}` (measured), and `Partitioned`/CHIPS now rides on exactly the `SameSite=None` session
+cookies this class needs. Read "no session cookie found" from it and you kill a live target. If you
+use it, load one `Set-Cookie` header per call and assert the cookie survived;
 only the browser step needs an engine. `nuclei`'s CSRF templates check token *presence*, never
 validation - they produce the first rows of the next table.
 
@@ -158,7 +171,8 @@ validation - they produce the first rows of the next table.
 |---|---|
 | token removed, request succeeds, cookie is `SameSite=None`, state changed | **confirmed CSRF.** Severity from the action - email, password or MFA is ATO-grade |
 | another account's token accepted on your session | confirmed - token not session-bound. Same ceiling |
-| `GET` changes state and the cookie is Lax or `None` | confirmed, and the cheapest PoC in the class (`<img>`) |
+| `GET` changes state and the cookie is `SameSite=None` or has no attribute | confirmed, and the cheapest PoC in the class - `<img>`, no script |
+| `GET` changes state and the cookie is `SameSite=Lax` | confirmed **only** via a top-level cross-site navigation. An `<img>`, `<iframe>`, `<script>` or `fetch` carries no Lax cookie, so a PoC of that shape failing proves nothing |
 | JSON route also accepts `text/plain` with no token | confirmed - show the `enctype="text/plain"` form working in a browser |
 | `_method`/override reaches `DELETE` from a form POST, or a path traversal slips past the token middleware | confirmed - the second is usually higher, it is a middleware-scoping bug |
 | cookie is `SameSite=Lax`, endpoint is POST-only, JSON-only and token-validated | **killed.** The majority case today |
@@ -189,7 +203,7 @@ the reset flow then delivers the token there" is.
 
 - **Writing the report before reading `Set-Cookie`.** Lax makes most of this class impossible.
 - **Claiming a form can send `application/json`.** It cannot. `text/plain` or nothing.
-- **Treating a `curl`-set `Origin` as an exploit,** or relying on Chrome's removed Lax+POST window or a browser default you never verified.
+- **Treating a `curl`-set `Origin` as an exploit,** or treating the two-minute Lax-allow-unsafe window as durable, or relying on a browser default you never verified.
 - **Filing logout, login or cart CSRF,** or a `200` you never confirmed by re-reading the resource.
 - **Forging a request into a real user's session.** Two accounts you own, always - anything else is unauthorized access, not testing.
 - **Testing shared or production objects** - payout destinations, org-wide settings, another tenant's webhook. Use your own, and take the hosted PoC down afterwards.

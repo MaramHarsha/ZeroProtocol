@@ -37,7 +37,13 @@ strings -a ipa/Payload/*.app/<Binary> | sort -u > ios-strings.txt
 **3. Read the manifest - it is the attack surface in one file.**
 
 ```bash
+grep targetSdkVersion apktool-out/apktool.yml           # decides what "exported" means below
 grep -oE '<(activity|service|receiver|provider)[^>]*android:exported="true"[^>]*' apktool-out/AndroidManifest.xml
+python3 -c 'import re                                   # implicit exports: filter, no attribute
+x=open("apktool-out/AndroidManifest.xml").read()
+for m in re.finditer(r"<(activity|service|receiver|provider)\b([^>]*)>(.*?)</\1>", x, re.S):
+    if "<intent-filter" in m.group(3) and "android:exported" not in m.group(2):
+        print(m.group(1), m.group(2).strip()[:120])'
 grep -oE 'android:(allowBackup|debuggable|usesCleartextTraffic)="true"' apktool-out/AndroidManifest.xml
 grep -A3 'intent-filter' apktool-out/AndroidManifest.xml | grep -oE 'android:scheme="[^"]*"' | sort -u
 grep -oE 'android:networkSecurityConfig="[^"]*"' apktool-out/AndroidManifest.xml
@@ -49,11 +55,18 @@ cat apktool-out/res/xml/network_security_config.xml 2>/dev/null
 | `exported="true"` activity with no permission | any installed app can launch it - bypass login screens, reach internal views |
 | `exported="true"` content provider | direct read/write of app data by any app |
 | `exported="true"` broadcast receiver | injectable intents, sometimes privileged actions |
+| `<intent-filter>` and **no** `android:exported` at all | exported by default when `targetSdkVersion` < 31 - the case the plain grep cannot see, and where most real findings live |
 | `allowBackup="true"` | `adb backup` extracts the app's private data on older Android |
 | `debuggable="true"` in a release build | full runtime access. Rare and serious |
 | `usesCleartextTraffic="true"` | HTTP traffic permitted |
 | `cleartextTrafficPermitted="true"` in the NSC | same, per-domain |
 | custom `android:scheme` | deep-link surface - see step 5 |
+
+Read the target SDK before judging any of this. Below 31 a filtered component that omits
+`android:exported` *is* exported, and the attribute is simply absent from the manifest - so the
+`exported="true"` grep alone under-reports the surface. At 31 and above the attribute is mandatory
+whenever a filter is present, so its absence is a build error rather than an export. State the
+target SDK in the report; it is what decides the impact.
 
 **4. Hunt secrets and the API surface.**
 
@@ -91,10 +104,15 @@ authorization-code theft.
 iOS equivalents: `CFBundleURLSchemes` in `Info.plist`, plus
 `com.apple.developer.associated-domains` for universal links.
 
-**6. Insecure storage** - on your own device, with your own account.
+**6. Insecure storage** - on your own device, with your own account. `run-as` is not the general
+case: it only works on a package built `android:debuggable="true"`, or on a userdebug/eng build.
+Against the Play Store release APK step 1 told you to obtain it fails with `run-as: package not
+debuggable`. The three routes are `run-as` on a debuggable build, `adb root`/`su` on **your own**
+rooted device or emulator, and `adb backup`/`bmgr` where `allowBackup="true"` permits it - name
+which one you used in the report, because it is the precondition that caps the severity.
 
 ```bash
-adb shell run-as com.target.app ls -R /data/data/com.target.app/
+adb shell run-as com.target.app ls -R /data/data/com.target.app/    # debuggable builds only
 adb shell run-as com.target.app cat /data/data/com.target.app/shared_prefs/*.xml
 adb shell run-as com.target.app ls /data/data/com.target.app/databases/
 # iOS: the app container's Library/Preferences/*.plist, Documents/, and the Keychain

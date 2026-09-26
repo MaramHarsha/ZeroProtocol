@@ -69,20 +69,32 @@ diff as_b.json as_a.json && echo "A SEES B'S OBJECT VERBATIM -> confirmed IDOR"
 | 200 / 403 / **200** | **anonymous access** - worse than IDOR. Report immediately |
 | 200 / 200 where the id is unguessable | still a finding, severity depends on how ids leak. Find the leak |
 
-**4. Sweep the verbs, not just GET.** Read access is the least of it.
+**4. Sweep the verbs, not just GET.** Read access is the least of it - but run the read-only
+sweeps of steps 7 and 8 **before** the writing verbs. A `DELETE` that lands removes the canary,
+and every later probe against `$OBJ` then answers 404: the sibling surface where most of this
+class actually lives reads as "correctly authorized" when it was never tested. `PUT`/`PATCH` with
+`-d '{}'` blanks the canary string the same way, and with it the proof of *which* object crossed.
+Give each destructive verb its own fresh victim.
 
 ```bash
-for M in GET POST PUT PATCH DELETE; do
+curl -sk "https://$H/api/orders/$OBJ" -H "Authorization: Bearer $TOK_A" \
+  -o /dev/null -w 'GET     %{http_code}\n'
+curl -sk -X POST "https://$H/api/orders/$OBJ" -H "Authorization: Bearer $TOK_A" \
+  -H 'Content-Type: application/json' -d '{}' -o /dev/null -w 'POST    %{http_code}\n'
+for M in PUT PATCH DELETE; do
+  VIC=$(create_order_as_b)        # your own disposable object in B, canary string inside
   printf '%-7s ' "$M"
-  curl -sk -X "$M" "https://$H/api/orders/$OBJ" -H "Authorization: Bearer $TOK_A" \
+  curl -sk -X "$M" "https://$H/api/orders/$VIC" -H "Authorization: Bearer $TOK_A" \
     -H 'Content-Type: application/json' -d '{}' -o /dev/null -w '%{http_code}\n'
 done
+curl -sk "https://$H/api/orders/$OBJ" -H "Authorization: Bearer $TOK_B" | grep -q zpcanary \
+  || echo "CANARY GONE - re-create it before reading any later 404 as authorized"
 ```
 
 A `PATCH` or `DELETE` that works on B's object is a far more severe finding than a `GET`.
 **Be careful:** test destructive verbs only against objects **you created in B**, never
-against anything you did not make. A `DELETE` that succeeds has destroyed data - so make the
-object disposable first.
+against anything you did not make, and never twice against the same one. A `DELETE` that
+succeeds has destroyed data - so mint the victim immediately before the probe.
 
 **5. Method and header overrides - the common bypass.**
 
@@ -117,7 +129,8 @@ The second form is the classic: the server validates that `A_ORDER` belongs to A
 
 **8. The sibling sweep after any hit.** One IDOR means the codebase has a *pattern* of missing
 checks. Walk every adjacent endpoint - a large share of paid access-control bugs are found
-here, not in the original probe.
+here, not in the original probe. A uniform 404 column is a result only once you have confirmed
+the canary object is still there as B; otherwise you are reading your own `DELETE`.
 
 ```bash
 for ep in orders invoices documents files messages notifications exports \
@@ -165,7 +178,7 @@ opposite sides of *that*.
 ## Pitfalls
 
 - **Testing against a real user's id.** Use your two accounts. Always.
-- **`DELETE` on an object you did not create.** You destroyed someone's data.
+- **`DELETE` on an object you did not create.** You destroyed someone's data. And a `DELETE` on your own canary before the read-only sweeps destroys the rest of the test - order the steps, one fresh victim per destructive verb.
 - **Reporting already-public data.** Check logged out, in a fresh browser, before writing.
 - **Reporting a 200 with no body diff.** Diff, or you are guessing.
 - **Missing the write verbs.** GET-only testing finds the least severe half of this class.

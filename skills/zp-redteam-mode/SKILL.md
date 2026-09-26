@@ -23,8 +23,8 @@ So this tier does not unlock from `scope.yaml` alone.
 
 ## The six things that must exist before this tier runs
 
-Record them in `.zeroprotocol/engagement.yaml`. If any is missing, **stop and ask** — do not
-proceed on a verbal "yes, go ahead".
+Record them in `.zeroprotocol/scope.yaml`, because that is the file the gate actually reads. If
+any is missing, **stop and ask** — do not proceed on a verbal "yes, go ahead".
 
 | # | Requirement | Why it is not optional |
 |---|---|---|
@@ -35,11 +35,30 @@ proceed on a verbal "yes, go ahead".
 | 5 | **A deconfliction channel and procedure** | The defenders must be able to ask "is this you?" and get an answer in minutes |
 | 6 | **An agreed stop condition** — what ends the engagement immediately (evidence of a real intruder, production impact, reaching the crown jewel) | Decided in advance, never in the moment |
 
+`zp-scope tier redteam` does not read prose. It reads six named scalar keys out of
+`.zeroprotocol/scope.yaml` — `authorization_ref` (row 1), `window` (row 3), `contact_technical`
+and `contact_stop` (row 4), `deconfliction` (row 5), `stop_condition` (row 6) — plus a non-empty
+`in_scope` (row 2) and a human confirmation. `zp-scope init` does **not** emit those keys as
+placeholders, and the free-text `--authorization` string does not populate any of them, so write
+them in by name. Order matters, because switching the engagement type clears the confirmation:
+
 ```bash
 zp-scope init --target <primary> --platform private
-# then record the engagement facts alongside it, and confirm with the authorization reference:
+zp-scope engagement red-team   # sets engagement: red-team AND clears any confirmation - this tier
+                               # needs its own sign-off. It prints the six keys to copy.
+# now add the six keys to .zeroprotocol/scope.yaml, one line each, e.g.
+#   authorization_ref: "SoW-2026-014, signed 2026-01-05"
+#   contact_technical: "<name, phone>"
+#   contact_stop:      "<name, phone>"
+#   window:            "2026-01-12..2026-01-23, 08:00-20:00 UTC"
+#   deconfliction:     "<channel, answer-time SLA, fallback>"
+#   stop_condition:    "<what ends the engagement immediately>"
 zp-scope confirm --by "<your name>" --authorization "SoW <ref>, signed <date>, contact <name>"
+zp-scope tier redteam          # 0 = tier unlocked; 9 prints exactly which fact is still missing
 ```
+
+Keep a human-readable engagement narrative wherever the team wants it — but the gate reads
+`scope.yaml`, so a fact recorded only in prose leaves the tier locked at exit 9.
 
 The `zp-scope` gate still applies to every host, exactly as in the bounty tier. This skill adds
 requirements; it removes none.

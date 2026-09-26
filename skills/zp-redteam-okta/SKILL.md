@@ -22,7 +22,9 @@ reaches, and what the defenders saw. A `sessionToken` is not a trophy; the contr
 
 ## Procedure
 
-1. **Clear the tier gate**, write `.zeroprotocol/engagement.yaml`, and list every in-scope tenant
+1. **Clear the tier gate** - the six engagement facts go into `.zeroprotocol/scope.yaml` by key
+   name (`authorization_ref`, `contact_technical`, `contact_stop`, `window`, `deconfliction`,
+   `stop_condition`), which is what `zp-scope tier redteam` reads. Then list every in-scope tenant
    by cell - `okta.com`, `okta-emea.com`, `oktapreview.com`, plus any government cell the SoW
    names. A preview or sandbox tenant is a **separate tenant with separate authorization**, and a
    sister brand's tenant is a third party until the scope says otherwise.
@@ -92,7 +94,10 @@ curl -s "${A[@]}" "https://$H/api/v1/users/$UID/roles"  | jq -r '.[] | [.type,.s
 curl -s "${A[@]}" "https://$H/api/v1/groups/$GID/roles" | jq -r '.[].type'        # admin by group membership
 # applications and federation trust
 curl -s "${A[@]}" "https://$H/api/v1/apps?limit=200" | jq -r '.[] | [.id,.signOnMode,.status,.label] | @tsv'
-curl -s "${A[@]}" "https://$H/api/v1/apps/$APP/sso/saml/metadata" | grep -oE 'WantAssertionsSigned="[a-z]+"|AuthnRequestsSigned="[a-z]+"|NameIDFormat[^<]*'
+# the metadata resource is an XML document - ask for XML instead of reusing the JSON Accept in A[]
+curl -s -H "Authorization: SSWS $OKTA_TOKEN" -H 'Accept: application/xml' \
+  "https://$H/api/v1/apps/$APP/sso/saml/metadata" \
+  | grep -oE 'WantAssertionsSigned="[a-z]+"|AuthnRequestsSigned="[a-z]+"|NameIDFormat[^<]*'
 curl -s "${A[@]}" "https://$H/api/v1/apps/$APP" \
   | jq '.settings.oauthClient | {application_type,grant_types,response_types,token_endpoint_auth_method,redirect_uris,wildcard_redirect}'
 curl -s "${A[@]}" "https://$H/api/v1/apps/$APP/grants" | jq -r '.[].scopeId'

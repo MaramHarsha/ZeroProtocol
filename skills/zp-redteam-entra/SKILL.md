@@ -22,7 +22,9 @@ gap is the finding.
 
 ## Procedure
 
-1. **Clear the tier gate**, write `.zeroprotocol/engagement.yaml`, and confirm which tenant IDs
+1. **Clear the tier gate** - the six engagement facts go into `.zeroprotocol/scope.yaml` by key
+   name (`authorization_ref`, `contact_technical`, `contact_stop`, `window`, `deconfliction`,
+   `stop_condition`), which is what `zp-scope tier redteam` reads. Then confirm which tenant IDs
    are in scope. Sister brands and acquisitions often sit in **separate tenants** with separate
    policies - each needs its own line in the scope, and an out-of-scope tenant is a third party.
 2. **Unauthenticated tenant profile.** Tenant ID, verified domains, federation type per domain,
@@ -75,7 +77,10 @@ az login --allow-no-subscriptions            # or Connect-MgGraph with the engag
 G=https://graph.microsoft.com
 az rest -m get -u "$G/v1.0/organization?\$select=id,displayName,onPremisesSyncEnabled"
 az rest -m get -u "$G/v1.0/policies/authorizationPolicy"                     # user consent, app creation, guest rights
-az rest -m get -u "$G/v1.0/policies/conditionalAccessPolicies"               # needs Policy.Read.All
+az rest -m get -u "$G/v1.0/identity/conditionalAccess/policies"            # needs Policy.Read.All or
+                                                                           # Policy.Read.ConditionalAccess.
+                                                                           # NOT policies/conditionalAccessPolicies -
+                                                                           # that alias only ever existed under /beta
 az rest -m get -u "$G/v1.0/oauth2PermissionGrants"                           # delegated consent already granted
 az rest -m get -u "$G/v1.0/applications?\$select=id,appId,displayName,passwordCredentials,keyCredentials"
 az rest -m get -u "$G/v1.0/roleManagement/directory/roleAssignments?\$expand=principal"
@@ -98,8 +103,18 @@ Invoke-DumpApps   -Tokens $tokens                      # app registrations, cons
 **Legacy and device paths**
 
 ```bash
-openssl s_client -quiet -connect outlook.office365.com:993 <<< 'a1 CAPABILITY'   # is IMAP still answering
-roadtx device -a register -n zp-<engagement-ref>-01      # ARTIFACT - log it, delete it at the end
+# Legacy auth is a tenant-state question, not a probe. outlook.office365.com is Microsoft's shared
+# multi-tenant endpoint: it returns the same banner for every tenant on earth, it is not the client's
+# host, and it has not been through zp-scope check - so it decides nothing. Read the tenant instead:
+az rest -m get -u "$G/v1.0/policies/authenticationMethodsPolicy"
+#   plus the signIns query above filtered on clientAppUsed, the authentication-policy assignment, and
+#   per-mailbox state from Exchange Online: Get-CASMailbox -Identity <upn> | fl *Enabled*
+
+# ROE must name device registration AND the technical contact must be called first - both are
+# MANDATORY below. Without either, stop at the device-trust read (the device record plus its
+# compliance attributes): it proves the same gap and writes nothing to a production tenant.
+roadtx device -a register -n zp-<engagement-ref>-01      # ARTIFACT, and the one write in this skill -
+                                                         # log it at creation, delete it at the end
 roadtx prt -a <device> ; roadtx browserprtauth           # PRT handling on an engagement-provided host only
 ```
 
@@ -110,7 +125,7 @@ roadtx prt -a <device> ; roadtx browserprtauth           # PRT handling on an en
 | Observation | Verdict |
 |---|---|
 | sign-in returns a code Entra only emits **after** the password validated (MFA required, CA blocked, device state required, external auth required) | **credential confirmed valid.** Stop there - you do not need the token to report it |
-| `"access_token"` appears in an error body | **not a token.** The CA step-up challenge nests that key inside `claims.capolids`. Parse JSON and check the top-level key, or every MFA-blocked attempt becomes a fake bypass |
+| `"access_token"` appears in an error body | **not a token.** A CA step-up challenge is a JSON-encoded *string* in the `claims` field, and inside that string `access_token` is the top-level member wrapping `capolids` - `claims="{\"access_token\":{\"capolids\":{\"essential\":true,\"values\":[\"<policy-guid>\"]}}}"`. Parse the response JSON and require a real top-level `access_token` on the token response itself, never a substring match, or every MFA-blocked attempt becomes a fake bypass |
 | user-not-found vs wrong-password differential | existence oracle; only the wrong-password branch costs a lockout attempt |
 | many accounts already locked while your cap is one attempt each | **you did not cause it.** Either you tripped the IP anti-spray layer or a real intruder is spraying now - pause, diagnose, and if it is not you, that is the stop condition and the most valuable finding in the run |
 | a CA policy exists but excludes a break-glass, a service account or a named app | **finding.** Exclusions are where CA actually fails |

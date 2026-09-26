@@ -119,6 +119,7 @@ HTTP/1.1 to the back end, and it rebuilds the request faithfully enough to carry
 ```bash
 for par in next returnTo url redirect callback continue dest lang; do
   for vec in '%0d%0aX-ZP-Injected:%2091234' '%0aX-ZP-Injected:%2091234' \
+             '%E5%98%8D%E5%98%8AX-ZP-Injected:%2091234' \
              '%E5%98%8A%E5%98%8DX-ZP-Injected:%2091234'; do
     curl -skI "https://$H/?$par=$vec" | grep -i 'x-zp-injected' && echo "  ^ via $par / $vec"
   done
@@ -128,16 +129,22 @@ done
 An injected header appearing in the response is a confirmed CRLF injection - reportable on its
 own, and it needs no desync and harms nobody.
 
-The third vector bypasses filters that only look for `%0d%0a`, and it is worth naming its
-mechanism correctly because the report depends on it. `%E5%98%8A%E5%98%8D` is **valid, minimal
-UTF-8** for U+560A and U+560D (the CJK characters 嘊 and 嘍) - it is *not* an overlong encoding
-of CR/LF. It works when something downstream applies a Unicode **best-fit / normalization fold**
-that collapses those code points to ASCII `\r` and `\n`. Call it a best-fit CRLF fold in the
-report: a vendor told "overlong UTF-8" will go and check whether their UTF-8 decoder accepts
-non-minimal sequences, which is the wrong control and will not fix this.
+The last two vectors bypass filters that only look for `%0d%0a`, and it is worth naming the
+mechanism *and the order* correctly because the report depends on it. Both are **valid, minimal
+UTF-8** - `%E5%98%8D` is U+560D (嘍) and `%E5%98%8A` is U+560A (嘊) - and neither is an overlong
+encoding of CR/LF. They work when something downstream applies a Unicode **best-fit fold** that
+keeps only the low byte of the code point: U+560**D** -> `\r` (0x0D) and U+560**A** -> `\n` (0x0A).
 
-(A genuine overlong encoding of CRLF would be `%E0%80%8D%E0%80%8A`. The overlong trick does show
-up legitimately elsewhere - `..%c0%af` in `zp-xxe-lfi` really is an overlong encoding of `/`.)
+So `%E5%98%8D%E5%98%8A` is the true CRLF order, and the widely-copied `%E5%98%8A%E5%98%8D` folds
+to LF-then-CR - it still lands often, because a bare LF terminates a header line in permissive
+parsers, but it is not CRLF. Try both; report the one that worked, in the right order. Call it a
+best-fit CRLF fold: a vendor told "overlong UTF-8" will go and check whether their UTF-8 decoder
+accepts non-minimal sequences, which is the wrong control and will not fix this, and a vendor
+handed the reversed mapping will fail to reproduce it in their own decoder test.
+
+(A genuine overlong encoding of CRLF would be `%E0%80%8D%E0%80%8A` - CR then LF, same order rule.
+The overlong trick does show up legitimately elsewhere - `..%c0%af` in `zp-xxe-lfi` really is an
+overlong encoding of `/`.)
 
 **8. Request tunnelling.** When the front end pins one connection per client, a desync can leak
 only into *your own* subsequent requests. That is much safer to demonstrate - if you can show

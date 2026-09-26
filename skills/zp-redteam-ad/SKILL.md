@@ -82,16 +82,23 @@ certipy find -u "$U@$D" -p "$P" -dc-ip "$DC" -vulnerable -stdout
 # 5e. DACL - read the ACE, do not write it
 dacledit.py -action read -principal "$U" -target 'Domain Admins' -dc-ip "$DC" "$D/$U:$P"
 
-# 6. relay surface - enumerate, do not relay
-netexec smb 10.0.0.0/24 --gen-relay-list artifacts/relay-candidates.txt
+# 6. relay surface - enumerate, do not relay. Never a CIDR: a /24 is 254 hosts none of which has
+#    been through the host gate. Take the candidate list from the BloodHound collection or the
+#    client inventory, funnel it through zp-scope, then ask only those hosts.
+zp-scope filter < inventory.txt > hosts.inscope.txt
+netexec smb hosts.inscope.txt --gen-relay-list artifacts/relay-candidates.txt
 netexec ldap "$DC" -u "$U" -p "$P" -M ldap-checker   # LDAP signing / channel binding state
 ```
 
 No-tool fallback, and the only step that needs no credential: an anonymous NTLM Type-1 to any
 IIS/Exchange/SharePoint endpoint that offers `WWW-Authenticate: NTLM` returns a Type-2 whose
-`AV_PAIR` block carries the NetBIOS domain, the DNS domain, the DNS **tree** name (the forest root)
-and the DC's clock. That gives you forest topology and UPN format before authentication. Use a
-keep-alive socket - a one-shot `curl` usually drops the connection before the Type-2 arrives:
+`AV_PAIR` block carries the NetBIOS domain and computer names, the DNS domain, the DNS **tree**
+name (the forest root) and, where the server includes it, `MsvAvTimestamp`. The pairs come from the
+host you asked - an IIS, Exchange or SharePoint server - so that timestamp is *that server's* clock,
+not a DC's: never draw a Kerberos-skew conclusion from it. The domain and tree names are the forest
+facts. One request is all it takes, because the Type-2 arrives in the `WWW-Authenticate` header of
+the 401 that answers the Type-1. If that header is missing, suspect a load balancer or WAF stripping
+it, and note that a few endpoints refuse `-I` (HEAD) - retry with `-X GET -o /dev/null -D -`:
 
 ```bash
 curl -sk -I -H 'Authorization: NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAAAAAAAAAAAAAGAbEdAAAADw==' \

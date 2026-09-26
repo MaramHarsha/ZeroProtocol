@@ -75,7 +75,12 @@ openssl s_client -connect "$H:443" -servername "$H" </dev/null 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
 
 # 5. SAML service-provider metadata, where the vendor publishes it - anonymous, and it names the IdP
-curl -sk --max-time 15 "https://$H/+CSCOE+/saml/sp/metadata" | head -40    # Cisco path
+TG='<tunnel-group>'                      # Cisco publishes SP metadata per tunnel group, and the
+                                         # tunnel-group element of the path is mandatory
+curl -sk --max-time 15 "https://$H/saml/sp/metadata/$TG" | head -40
+# There is no +CSCOE+ prefix on this handler - that namespace is the WebVPN portal (/+CSCOE+/logon.html).
+# Get $TG from the realm/portal output of step 7 or from the client; an empty result or a 404 is
+# INCONCLUSIVE, never "this appliance is not federated".
 # Fortinet, Citrix and Ivanti publish SP metadata at vendor-specific paths - confirm the path from
 # the vendor's current documentation rather than guessing, then fetch it the same way.
 
@@ -85,7 +90,11 @@ curl -sk --max-time 10 "https://$H/" | grep -oiE 'realm|tunnel.?group|gateway|[a
 # 8. what the tunnel reaches, using the engagement-provided client and credential only
 ip route show ; ip -o addr show          # routes and address pushed by the appliance
 getent hosts intranet.corp.example      # does the tunnel push internal DNS
-nmap -sn -n --max-rate 20 10.10.0.0/24  # only ranges the SoW names, and only at an agreed pace
+# One probe per SoW-named range, never a sweep: the MANDATORY table below allows a routing table
+# plus one ICMP or one TCP connect per range, and every host clears the gate before it is touched.
+zp-scope check 10.10.0.5 && ping -c1 -W2 10.10.0.5     # or: nc -z -w2 10.10.0.5 445
+# If the client genuinely contracts a sweep, name it in the ROE, put the range behind `zp-scope
+# filter`, agree the pace with the technical contact, and log it as a scheduled test.
 ```
 
 No-tool fallback: every fingerprint and disclosure step above is a single `curl`; if `curl` is

@@ -24,12 +24,22 @@ gadget before you write anything.
 ```
 __proto__            {"__proto__": {"polluted": "zp91234"}}
 constructor          {"constructor": {"prototype": {"polluted": "zp91234"}}}
-nested/bracket       ?a[__proto__][polluted]=zp91234   ·   ?__proto__.polluted=zp91234
+nested/bracket       ?a[__proto__][polluted]=zp91234
+dot - allowDots only ?__proto__.polluted=zp91234
 ```
 
 Vulnerable sinks are functions that recursively copy attacker-controlled keys: `merge`,
 `deepMerge`, `extend`, `clone`, `defaultsDeep`, `set`, `assign`-style helpers, and query-string
 parsers that build nested objects (`qs`, `express`'s extended body parser).
+
+**The query-string route is version- and config-dependent, so weight the JSON body first.** `qs`
+has ignored `__proto__` keys since 6.10.3 (CVE-2022-24999, picked up by Express 4.17.3+), and its
+`allowDots` is off by default - so on a maintained stack `?__proto__.polluted=x` arrives as one
+literal key spelled `__proto__.polluted` and pollutes nothing, and the bracket form is dropped.
+The query probes failing tells you the *parser* is patched, not that the app is safe. They stay
+worth firing because they are one request each; the real yield is a JSON body reaching a recursive
+merge, which still pollutes on current versions. The query route needs an old `qs`, `allowDots` or
+`allowPrototypes` switched on, or a `_.set`-style path sink.
 
 ---
 
@@ -47,7 +57,7 @@ curl -sk -X POST "https://$H/api/settings" -H "Authorization: Bearer $TOK_A" \
 # then look for zpcanary appearing on an unrelated object
 curl -sk "https://$H/api/profile" -H "Authorization: Bearer $TOK_A" | grep -o zpcanary
 
-# query-string parser
+# query-string parser - cheap, but only bites an old qs, allowDots/allowPrototypes, or _.set
 curl -sk "https://$H/api/search?__proto__[zpcanary]=zp91234"
 curl -sk "https://$H/api/search?constructor[prototype][zpcanary]=zp91234"
 ```
@@ -135,9 +145,16 @@ grep -nE 'Object\.freeze\(Object\.prototype\)|\[\s*["\x27]__proto__' js/*.js   #
 | pollution flips an authorization default, verified by reading the object back | **confirmed authz bypass** |
 | pollution confirmed, **no gadget found** | Low / informational. Report honestly as pollution without demonstrated impact - do not inflate it |
 | the canary only appears on the object you sent | not pollution, just input reflection. Killed |
-| `Object.freeze(Object.prototype)` or a null-prototype object in use | defended. Killed - record it |
+| `Object.freeze(Object.prototype)` in use | **`Object.prototype` only** is defended. Retest `Array.prototype`, `Function.prototype`, class prototypes and shared config objects before you call it killed |
+| a null-prototype (`Object.create(null)`) merge target | that one sink is defended, not the app. Move to the other merge sites |
 | Node version with `--disable-proto=throw` | killed for `__proto__`; try `constructor.prototype` |
 | pollution persists and breaks the app for other users | **stop.** You have caused an availability problem - see below |
+
+Measured on node v22.23.3: with `Object.prototype` frozen, the same recursive merge still set
+`[].arrpwn` and `C.prototype.cpwn`, and `Function.prototype` stayed extensible - freezing one object
+freezes one object. In sloppy mode the blocked write to `Object.prototype` also fails **silently**;
+only strict/ESM code throws `TypeError: Cannot add property pwn, object is not extensible`. No error
+is not evidence of a defence - read the canary back.
 
 **The honest-severity line:** "I polluted the prototype but found no gadget" is a real but Low
 finding. Many programs accept it; none accept it dressed up as RCE.

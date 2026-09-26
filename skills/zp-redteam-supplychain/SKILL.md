@@ -23,7 +23,9 @@ something you probe.
 
 ## Procedure
 
-1. **Clear the tier gate**, write `.zeroprotocol/engagement.yaml`, and list the client-owned
+1. **Clear the tier gate** - the six engagement facts go into `.zeroprotocol/scope.yaml` by key
+   name (`authorization_ref`, `contact_technical`, `contact_stop`, `window`, `deconfliction`,
+   `stop_condition`), which is what `zp-scope tier redteam` reads. Then list the client-owned
    sources you may read - DNS zones, IdP tenant, source orgs, CI, artifact registries, and any log
    export the client hands you. Everything else is a third party until the scope names it.
 2. **Build the supplier inventory from client-side signals only** - SPF and DMARC records, MX and
@@ -89,11 +91,21 @@ aws organizations list-delegated-administrators --output table
 **Namespace exposure - a public index lookup, never a publish**
 
 ```bash
-grep -rhoE '"@[a-z0-9-]+/[a-z0-9._-]+"' package-lock.json | tr -d '"' | sort -u > scopes.txt
-while read -r p; do
-  printf '%-40s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$p")"
-done < scopes.txt                          # 404 means the name is unclaimed on public npm
+grep -rhoE '"@[a-z0-9-]+/[a-z0-9._-]+"' package-lock.json | tr -d '"' | sort -u > pkgs.txt
+while read -r pkg; do
+  printf '%-40s %s\n' "$pkg" "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$pkg")"
+done < pkgs.txt        # a 404 here means only "not published at that path"
+# For a scoped package the publishable unit is the SCOPE, not the package path. npm answers 404 for
+# @scope/name both when the scope is unregistered and when the scope exists but belongs to another
+# user or org - and in the second case nobody else can claim the name, so there is no confusion path.
+# Resolve the scope before you grade anything:
+sed -E 's:(@[a-z0-9-]+)/.*:\1:' pkgs.txt | sort -u > scopes.txt
+while read -r s; do
+  printf '%-20s %s\n' "$s" "$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/-/org/${s#@}/package")"
+done < scopes.txt      # a lead, not a verdict: this path is auth-sensitive, so corroborate ownership
+                       # from the scope's public org/user page before calling the scope unregistered
 grep -rE '^@[a-z0-9-]+:registry=|^registry=' .npmrc                    # scope-to-registry mapping
+# Unscoped internal names have no scope layer - there the package-path 404 is the right check.
 ```
 
 **Provenance on what the client consumes**
@@ -115,7 +127,8 @@ No tooling - read the manifests. An unpinned reference, an absent `@sha256:`, a 
 
 | Observation | Verdict |
 |---|---|
-| internal scope in a lockfile the CI installs, name unclaimed on the public index, and no scope-to-registry mapping in the client's resolver config | **confirmed dependency-confusion exposure.** Three facts, all read from the client's side. Never publish the name |
+| internal scope in a lockfile the CI installs, the **scope itself** unregistered on the public index (not merely a 404 on the package path), and no scope-to-registry mapping in the client's resolver config | **confirmed dependency-confusion exposure.** Three facts, all read from the client's side. Never publish the name |
+| the package path 404s but the scope is registered to another user or org | killed - the name is not claimable by anyone else, so there is no confusion path. Informational at most |
 | the name is unclaimed but `.npmrc` maps the scope to the internal registry | killed - the control is working. Recommend defensive registration as hygiene |
 | third-party action or base image on a mutable tag, in a job that can read org secrets or runs on a shared runner | **confirmed code-delivery path.** The workflow text and the secret names are the proof |
 | self-hosted runner reachable from a repo outsiders can open a PR against | **confirmed pivot** from configuration. Do not run a job on it |
@@ -194,7 +207,7 @@ installed.
 - **Publishing anything to a public registry.** A dependency-confusion or typosquat package reaches every consumer of that index, not just your client. It is outside any engagement scope and illegal in most jurisdictions without the ecosystem's authorization.
 - **Opening a pull request against a client repository** to demonstrate workflow injection without that specific step in writing. It executes code on their CI and involves developers who did not consent.
 - **Using a supplier credential found in client data.** A vendor token in a log or lockfile is a retrievability finding that stops at reporting - authenticating with it crosses into the vendor's estate.
-- **Confusing an unclaimed name with an exploitable one.** Without the resolver-config fact it is informational, and calling it Critical costs you credibility on the findings that are real.
+- **Confusing an unclaimed name with an exploitable one.** Without the resolver-config fact - and, on a scoped package, without the scope itself being unregistered - it is informational, and calling it Critical costs you credibility on the findings that are real.
 - **Enumerating a public index at scan speed**, or pulling multi-gigabyte images blindly - hammering a shared registry is a denial-of-service risk against infrastructure everyone depends on.
 - **Weakening a control to prove the point** - disabling branch protection, dependency review, required signing or an EDR agent on a build host. Forbidden here, and it destroys the detection half of the report.
 - **Leaving persistence in the build plane** - a workflow file, deploy key, runner registration token, PAT, registry credential or reserved package name. This is the tier's one unforgivable outcome, because everything in the build plane ships.

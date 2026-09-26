@@ -35,7 +35,8 @@ echo | openssl s_client -connect "$H:$P" -servername "$H" \
 echo | openssl s_client -connect "$H:$P" -servername "$H" -showcerts 2>/dev/null \
   | grep -c 'BEGIN CERTIFICATE'                     # 1 = leaf only, intermediate missing
 echo | openssl s_client -connect "$H:$P" -servername "$H" 2>/dev/null \
-  | openssl x509 -noout -checkend 604800; echo "expires within 7d rc=$?"
+  | openssl x509 -noout -checkend 604800 >/dev/null \
+  && echo "ok: more than 7d left" || echo "EXPIRES within 7d"   # rc 1 = expiring, rc 0 = fine
 H=$H python3 -c '                                    # stdlib fallback, no openssl needed
 import socket,ssl,os; h=os.environ["H"]
 try:

@@ -24,33 +24,52 @@ touch. Exit 1 refuse · 3 stop · 4 stop.
 **1. Inventory the cloud surface the app reveals.**
 
 ```bash
-grep -ohE 'https?://[a-z0-9.-]+\.(s3[.-][a-z0-9-]*\.?amazonaws\.com|s3\.amazonaws\.com|storage\.googleapis\.com|blob\.core\.windows\.net|r2\.cloudflarestorage\.com|digitaloceanspaces\.com|oss-[a-z-]+\.aliyuncs\.com)[^"'"'"' ]*' \
-  surface/urls.txt js/*.js 2>/dev/null | sed -E 's#(https?://[^/]+).*#\1#' | sort -u
+grep -ohE 'https?://([a-z0-9.-]+\.)?(s3[.-][a-z0-9-]*\.?amazonaws\.com|storage\.googleapis\.com|blob\.core\.windows\.net|r2\.cloudflarestorage\.com|digitaloceanspaces\.com|oss-[a-z-]+\.aliyuncs\.com)[^"'"'"' ]*' \
+  surface/urls.txt js/*.js 2>/dev/null \
+  | sed -E 's#^(https?://(s3[.-][a-z0-9.-]*amazonaws\.com|storage\.googleapis\.com)/[^/?]+).*#\1#; t; s#(https?://[^/]+).*#\1#' \
+  | sort -u
 grep -ohE '[a-z0-9.-]{3,63}\.s3[.-][a-z0-9.-]*amazonaws\.com' js/*.js 2>/dev/null | sort -u
 ```
 
-**2. Object storage - test read, list and write separately.** They are three different findings.
+The leading label is **optional** on purpose. Path-style URLs - `s3.amazonaws.com/<bucket>/key`,
+`storage.googleapis.com/<bucket>/key` - carry no extra label, and they are the commonest GCS form
+you will meet. For those the bucket name lives in the *path*, so the `t` branch keeps the first
+path segment instead of collapsing the URL to its host and throwing the bucket away.
+
+**2. Object storage - test read, list and write separately.** They are three different findings,
+and the bucket root is not the read test. `GET /` on a bucket is **ListObjects** (`s3:ListBucket`);
+`GET /<key>` is **GetObject** (`s3:GetObject`). Different grants, different verdicts.
 
 ```bash
 B=bucket-name
-curl -sk -o /dev/null -w 'anon GET    %{http_code}\n' "https://$B.s3.amazonaws.com/"
-curl -sk "https://$B.s3.amazonaws.com/?list-type=2&max-keys=5" | head -c 600   # listing
-curl -sk -X PUT --data 'zp-canary-91234' -o /dev/null -w 'anon PUT    %{http_code}\n' \
-  "https://$B.s3.amazonaws.com/zp-write-test-91234.txt"
+K=assets/logo.png                                        # a key the app itself references
+curl -sk -D /tmp/zp-list.h -o /dev/null -w 'anon LIST   %{http_code}\n' "https://$B.s3.amazonaws.com/"
+grep -i 'x-amz-bucket-region' /tmp/zp-list.h     # on a 301, the region to re-test in
+curl -sk -o /dev/null -w 'anon GET    %{http_code}\n' "https://$B.s3.amazonaws.com/$K"
+curl -sk "https://$B.s3.amazonaws.com/?list-type=2&max-keys=5" | head -c 600   # listing body
+curl -sk -X PUT --data 'zp-canary-91234' -D /tmp/zp-put.h -o /dev/null \
+  -w 'anon PUT    %{http_code}\n' "https://$B.s3.amazonaws.com/zp-write-test-91234.txt"
 curl -sk -o /dev/null -w 'ACL         %{http_code}\n' "https://$B.s3.amazonaws.com/?acl"
 ```
 
 | Response | Meaning |
 |---|---|
-| `200` + `<ListBucketResult>` | **public listing.** Read the first few keys only |
-| `403 AccessDenied` | bucket exists, private. Not a finding |
+| `200` + `<ListBucketResult>` on `/` | **public listing.** Read the first few keys only |
+| `403 AccessDenied` on `/` | list is denied. **Not killed yet** - test `GET /<known-key>` first |
+| `200` on `/<key>` while `/` is `403` | **public object read, list denied.** The commonest real one |
+| `301 PermanentRedirect` | bucket exists in another region. Re-test at `https://$B.s3.<region>.amazonaws.com/`; the region is the `x-amz-bucket-region` header in `/tmp/zp-list.h` |
 | `404 NoSuchBucket` | claimable -> `zp-takeover` |
 | `200` on PUT | **public write.** Critical - anyone can plant content the app serves |
 | `200` on `?acl` | ACL readable - often shows `AllUsers` grants |
 
-If PUT succeeds: **delete your test object immediately** (`curl -X DELETE`), and say in the report
-that you wrote one canary file and removed it. Never overwrite an existing key - that is
-destruction, and on a bucket serving the app's JavaScript it is a supply-chain attack.
+If PUT succeeds: **delete your test object** (`curl -X DELETE -o /dev/null -w '%{http_code}\n' …`),
+then prove it is gone with a follow-up `GET` that must return `404`. Do not assume the delete
+worked. Anonymous delete needs its own `s3:DeleteObject` grant that public-write buckets often
+lack, and on a versioned bucket - `x-amz-version-id` present in `/tmp/zp-put.h` - a DELETE only
+writes a delete marker, so the object and its version survive. If cleanup fails or is uncertain,
+name the exact key in the report and ask the program to remove it; never claim a cleanup you did
+not verify. Never overwrite an existing key - that is destruction, and on a bucket serving the
+app's JavaScript it is a supply-chain attack.
 
 Permutations for finding buckets, without any tool:
 
@@ -64,8 +83,19 @@ for s in dev staging stage test qa prod backup backups api assets static cdn med
 done
 ```
 
-GCS: `https://storage.googleapis.com/<bucket>/` and `?prefix=&maxResults=5`.
+GCS: `https://storage.googleapis.com/<bucket>?prefix=&max-keys=5` - that endpoint is the
+S3-compatible **XML** API, so the cap is `max-keys`. `maxResults` belongs to the JSON API
+(`/storage/v1/b/<bucket>/o?maxResults=5`); mixing them means the cap is ignored and you pull up to
+1000 keys.
 Azure: `https://<acct>.blob.core.windows.net/<container>?restype=container&comp=list`.
+
+**The table above reads S3 codes only.** The other providers answer differently:
+
+- **Azure** returns `404 ResourceNotFound` for a container that exists but has public access
+  disabled - by design, so the endpoint cannot confirm existence. A 404 here is *private or
+  absent*, never "claimable". The takeover signal is at DNS: resolve `<acct>.blob.core.windows.net`
+  and only **NXDOMAIN** is a lead -> `zp-takeover`.
+- **GCS**: `403 AccessDenied` = exists and private; `404 NoSuchBucket` = the name is free.
 
 **3. Metadata credentials via SSRF.** See `zp-ssrf` for the delivery; this is what to do after.
 
@@ -99,7 +129,7 @@ an unauthorized enumeration.
 
 ```bash
 for u in "https://$H:10250/pods" "https://$H:6443/api/v1/namespaces" \
-         "https://$H:2375/version" "https://$H:2376/version" \
+         "http://$H:2375/version" "https://$H:2376/version" \
          "http://$H:9200/_cat/indices?v" "http://$H:5601/api/status" \
          "http://$H:8500/v1/catalog/services" "http://$H:2379/version" \
          "http://$H:9090/api/v1/targets" "http://$H:15672/api/overview" \
@@ -108,6 +138,10 @@ for u in "https://$H:10250/pods" "https://$H:6443/api/v1/namespaces" \
   curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "$u"
 done
 ```
+
+`2375` is Docker's **plaintext** port and `2376` is the TLS one - speaking `https://` to 2375
+fails the handshake and `%{http_code}` comes back `000`, so a wide-open socket reads as closed. On
+2376 a handshake that demands a client certificate is the *secure* configuration, not a finding.
 
 An unauthenticated Docker API (`2375`) or kubelet (`10250`) is container escape and cluster
 compromise. Confirm with **one read-only call** (`/version`, `/pods`) and stop - do not create
@@ -137,7 +171,8 @@ or catalogue them.
 | public bucket listing with customer data | **confirmed.** High to Critical by sensitivity |
 | public bucket listing of public assets (images, CSS) | Low or not a finding - check what is in it |
 | anonymous write to a bucket the app serves from | **Critical** - supply-chain. Delete your canary |
-| `403` on the bucket | exists, private. Killed |
+| `403` on the bucket root, `403` on a known key too | exists, private. Killed |
+| `403` on the bucket root but a known key returns `200` | **confirmed public read** - list denied, objects are not. Report it |
 | metadata credentials retrievable via SSRF | **Critical.** Report retrievability, never use them |
 | Docker API or kubelet unauthenticated | **Critical.** One read-only call as proof |
 | Elasticsearch/Kibana/Consul open with data | High to Critical |

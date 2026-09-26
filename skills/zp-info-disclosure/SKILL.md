@@ -111,8 +111,8 @@ returns and ask which of them the interface ever shows.
 
 ```bash
 curl -sk "https://$H/api/me" -H "Cookie: session=$TOK_A" \
-  | jq -r '[paths(scalars) | join(".")] | sort | unique | .[]'
-# no jq - same leaf list from the stdlib:
+  | jq -r '[paths(type != "object" and type != "array") | map(tostring) | join(".")] | sort | unique | .[]'
+# no jq - a rougher list from the stdlib: keeps nulls, but samples only the first array element
 curl -sk "https://$H/api/me" -H "Cookie: session=$TOK_A" | python3 -c 'import json,sys
 def w(o,p=""):
  if isinstance(o,dict):
@@ -121,6 +121,10 @@ def w(o,p=""):
  else: print(p.lstrip("."))
 w(json.load(sys.stdin))'
 ```
+
+Match on `type`, not `scalars`: `paths(scalars)` feeds the value into a `select`, so every `null`
+and `false` leaf silently vanishes (jq 1.7) - and `"mfa_secret": null` is exactly the leaf this
+diff exists to find. The stdlib fallback keeps nulls but walks only `o[:1]` of each array.
 
 Fields worth the report - `password_hash`, `mfa_secret`, `recovery_codes`, `api_key`,
 `internal_notes`, `risk_score`, `kyc_*`, `*_token`. A field on **your own** record is a

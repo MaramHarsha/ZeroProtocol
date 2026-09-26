@@ -28,11 +28,20 @@ registry exposure. This skill goes deeper on the Kubernetes control plane; do no
 H=target.tld
 for p in 6443 8443 10250 10255 2379 2380 4194 44134; do
   printf '%-6s ' "$p"
-  curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "https://$H:$p/" 2>/dev/null \
-    || printf 'closed\n'
+  for sch in https http; do
+    c=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 "$sch://$H:$p/" 2>/dev/null)
+    [ "$c" != "000" ] && { printf '%s %s\n' "$sch" "$c"; continue 2; }
+  done
+  printf 'closed\n'
 done
 curl -sk --max-time 8 "https://$H:6443/version"      # gitVersion is anonymous on most clusters
 ```
+
+**Try both schemes, and report whichever answers.** Half these ports are plaintext by definition:
+10255 is the HTTP read-only kubelet, 4194 is cAdvisor, and 2379/2380 are HTTP whenever etcd runs
+without TLS - which is the exposure you are hunting. `curl -sk https://…` against a plaintext
+listener fails the TLS handshake and yields `%{http_code}` `000`, so an `https`-only sweep reports
+the wide-open ports as closed. Only 6443, 8443 and 10250 are TLS-first.
 
 `gitVersion` gates every version-bound CVE - carry it to `zp-cve`, do not report it alone.
 
@@ -41,11 +50,17 @@ curl -sk --max-time 8 "https://$H:6443/version"      # gitVersion is anonymous o
 ```bash
 S="https://$H:6443"
 curl -sk --max-time 8 "$S/version"; echo
-curl -sk --max-time 8 "$S/api" | head -c 200; echo         # APIVersions, often pre-auth
+curl -sk --max-time 8 "$S/api" | head -c 200; echo         # discovery - see below
 curl -sk --max-time 8 "$S/api/v1/namespaces" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); print(len(d.get("items",[])),"namespaces")' \
     2>/dev/null || echo "not JSON / denied"
 ```
+
+`/version` and `/healthz` are anonymous by default: the `system:public-info-viewer` ClusterRole is
+bound to `system:unauthenticated` as well. `/api` and `/apis` are **not** - discovery lives in
+`system:discovery`, bound to `system:authenticated` only, so a default cluster answers `403` to an
+anonymous caller. That makes a `200` on `/api` the stronger signal of the two: anonymous auth is
+enabled *and* extra RBAC was handed to it. Do not read it as "often pre-auth".
 
 A `200` with a populated `items` array from `system:anonymous` is the finding and the whole proof.
 A `200` with `items: []`, or a `403`/`401` body, is RBAC doing its job - stop there. Do **not**
@@ -78,12 +93,17 @@ is reachable and stop.
 
 ```bash
 curl -sk --max-time 8 "https://$H:8443/" | grep -io 'kubernetes dashboard' | head -1
-curl -sk -o /dev/null -w '%{http_code}\n' --max-time 8 "https://$H:8443/api/v1/login/status"
+curl -sk --max-time 8 "https://$H:8443/api/v1/login/status"; echo   # mode only, NOT a finding
+curl -sk --max-time 8 "https://$H:8443/api/v1/namespace" | head -c 200; echo   # the real test
 ```
 
-Presence of the shell is Low/informational. The question is whether login is enforced - a
-token-less data view is the finding, but confirm it by *one* resource-list status code, not by
-reading secrets through it.
+Presence of the shell is Low/informational. `/api/v1/login/status` is the dashboard's own
+unauthenticated login-mode endpoint: it answers `200` to everybody with
+`{"tokenPresent":false,…,"httpsMode":true}` even on a hardened deployment, so its status code
+proves nothing. Read it only as a mode fingerprint. The question is whether login is enforced, and
+the answer is in the **body of one resource list** (`/api/v1/namespace`, `/api/v1/node`) requested
+with no bearer token: a populated `items`/`listMeta` is the finding. One list, and stop - do not
+read Secrets through it.
 
 **6. Ingress misrouting between namespaces or tenants.** Pin the connection to the ingress IP and
 vary the `Host`, which is what actually selects the backend.
@@ -126,7 +146,7 @@ escapes (runc, ingress-nginx) route to `zp-cve` as leads, not exploits.
 | `GET http://$H:10255/pods` | read-only kubelet | pod JSON, no auth - info disclosure, no exec |
 | `GET https://$H:10250/pods` | full kubelet | pod JSON, no auth - stop here, do not `/run` |
 | `GET http://$H:2379/version` | etcd, plain HTTP | etcd version JSON with no client cert |
-| `GET https://$H:8443/api/v1/login/status` | dashboard | `200` data view without a token |
+| `GET https://$H:8443/api/v1/namespace` | dashboard | populated `items`/`listMeta` with no bearer token (`/api/v1/login/status` is `200` for everyone - mode fingerprint only) |
 | `--resolve <vh>:443:$IP` Host swap | ingress routing | a *different* backend served for another tenant/namespace |
 | decode SA-token `aud`/`exp` | leaked token | claims readable offline - judge, never replay |
 

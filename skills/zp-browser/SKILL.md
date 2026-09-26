@@ -35,9 +35,16 @@ parsing raw HTML.
 
 ```bash
 npm install -g agent-browser
-agent-browser install          # fetches Chrome for Testing, first run only
-agent-browser doctor           # verify the install
+agent-browser install               # macOS: fetches Chrome for Testing, first run only
+agent-browser install --with-deps   # Linux: the same, plus the system libraries Chromium needs
+agent-browser doctor                # verify the install
 ```
+
+ZeroProtocol runs on a Linux box, so `--with-deps` is the install you want. Plain `install`
+fetches the browser but none of its shared libraries, and the first `open` dies on a missing
+library; the CLI itself prints `agent-browser install --with-deps` as the remedy. It shells out
+to `sudo apt-get` / `dnf`, so it needs privileges once. It is also what installs the `certutil`
+that `--ca-cert` needs to trust an intercepting-proxy CA - which is the `zp-proxy` path below.
 
 **Do not memorise its flags from this file, and do not copy its skill text into the repo.** The
 CLI ships its own always-current documentation - load that at runtime and work from it:
@@ -53,11 +60,23 @@ The core loop, which is stable:
 agent-browser open <url>      # 1. navigate
 agent-browser snapshot -i     # 2. interactive elements only, as @e1 @e2 ... refs
 agent-browser click @e3       # 3. act on a ref
-agent-browser snapshot -i     # 4. RE-SNAPSHOT - refs go stale the moment the page changes
+agent-browser snapshot -i     # 4. re-snapshot to see what the page became
 ```
 
-Refs are reassigned on every snapshot and are invalid after any navigation, submit, dynamic
-re-render or dialog. Re-snapshot before every ref interaction or you will click the wrong thing.
+Refs (`@eN`) are stable identities, not positions in a list: the same element keeps its ref
+across snapshots of the same page, and the CLI hands out ref numbers from a counter that never
+rewinds, so a number is not recycled for a different element. You re-snapshot to *see* the new
+state - after a navigation, a submit, a re-render or a dialog - not because the old numbers have
+been shuffled.
+
+Two cases do break a ref:
+
+- **Tab switch.** Refs from a snapshot taken on another tab do not apply. Re-snapshot after
+  `tab <id>`.
+- **The document was replaced.** A ref whose node is gone is resolved by a role+name fallback
+  rather than failing, so an action can land on a *rebuilt* element that merely looks the same.
+  That is another reason proof of a client-side finding comes from the page state you read back,
+  never from the fact that a click returned success.
 
 ---
 

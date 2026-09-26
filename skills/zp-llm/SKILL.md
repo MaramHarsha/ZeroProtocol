@@ -1,6 +1,6 @@
 ---
 name: zp-llm
-description: ZeroProtocol hunter for LLM and RAG application flaws - direct and indirect prompt injection, RAG poisoning, instruction smuggling, jailbreaks, system-prompt extraction, and insecure output handling. Use when a target has a chatbot, AI assistant, AI search, summarise/translate/rewrite feature, RAG pipeline, or any endpoint that puts user or fetched content into a model prompt. Maps to OWASP LLM01:2026. Grades on the invariant broken outside the transcript, never on what the model merely said.
+description: ZeroProtocol hunter for LLM and RAG application flaws - direct and indirect prompt injection, RAG poisoning, instruction smuggling, jailbreaks, system-prompt extraction, and insecure output handling. Use when a target has a chatbot, AI assistant, AI search, summarise/translate/rewrite feature, RAG pipeline, or any endpoint that puts user or fetched content into a model prompt. Maps to OWASP LLM01:2025 prompt injection. Grades on the invariant broken outside the transcript, never on what the model merely said.
 ---
 
 # zp-llm - the model said it, so what
@@ -94,6 +94,9 @@ a privileged call is a sentence in the prompt, that is the finding.
 ## Insecure output handling
 
 Model output flowing unescaped into a sink. Frequently the cleanest, most reproducible LLM bug.
+Cite it as `LLM05:2025 Improper Output Handling` (prompt injection itself is `LLM01:2025`,
+system-prompt leakage `LLM07:2025`) - the current edition is 2025, from the OWASP GenAI Security
+Project. Check the live list before you paste an id into a report rather than incrementing the year.
 
 | Sink | Payload the model is coaxed into emitting | Result |
 |---|---|---|

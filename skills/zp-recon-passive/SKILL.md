@@ -43,8 +43,11 @@ curl -sS "https://api.hackertarget.com/hostsearch/?q=$D"    | cut -d, -f1
 curl -sS "https://rapiddns.io/subdomain/$D?full=1"          | grep -oE "[a-z0-9.-]+\.$D"
 curl -sS "https://otx.alienvault.com/api/v1/indicators/domain/$D/passive_dns" \
   | jq -r '.passive_dns[].hostname'
-curl -sS "https://urlscan.io/api/v1/search/?q=domain:$D&size=1000" \
-  | jq -r '.results[].page.domain'
+# `domain:$D` matches any scan that merely *contacted* the target, and `page.domain` is the
+# site that was scanned - often an unrelated third party - so filter to the target like the
+# rapiddns line above, and page with `search_after` instead of asking for one huge page
+curl -sS "https://urlscan.io/api/v1/search/?q=domain:$D&size=100" \
+  | jq -r '.results[] | .page.domain, .task.domain' | grep -E "(^|\.)${D//./\\.}$"
 ```
 
 With tooling, the same work in one line each:

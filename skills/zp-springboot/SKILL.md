@@ -23,11 +23,16 @@ H=target.tld
 curl -skI "https://$H/" | grep -iE 'x-application-context|^server:|x-powered-by'
 curl -sk "https://$H/nope-$RANDOM" | grep -oiE 'whitelabel error page|org\.springframework[.a-zA-Z]*'
 curl -sk "https://$H/error?trace=true" | head -c 300   # server.error.include-stacktrace=on_param
-for b in "" /actuator /manage /management /admin /api/actuator; do
-  printf '%-16s %s\n' "$b" "$(curl -sk -o /dev/null -w '%{http_code}' -H 'Accept: application/json' "https://$H$b/actuator")"; done
+for c in "" /api /app; do                              # servlet context path: endpoints keep /actuator
+  printf '%-22s %s\n' "$c/actuator" "$(curl -sk -o /dev/null -w '%{http_code}' -H 'Accept: application/json' "https://$H$c/actuator")"; done
+for b in /manage /management /admin /monitoring; do     # renamed endpoints.web.base-path: no /actuator segment
+  printf '%-22s %s\n' "$b/health" "$(curl -sk -o /dev/null -w '%{http_code}' -H 'Accept: application/json' "https://$H$b/health")"; done
 curl -sk -H 'Accept: application/json' "https://$H/actuator" | grep -oE '"href":"[^"]+"' | sort -u
 ```
 `X-Application-Context` is Boot 1.x only and a Low leak itself; the HAL index names every registered endpoint.
+Probe the two shapes separately. A context path prefixes `/actuator` (`/api/actuator`); a renamed
+`management.endpoints.web.base-path` **replaces** it, so the endpoints sit at `/manage/health` and
+`/manage/env` and `/manage/actuator` is a 404 everywhere. Add `$b/env` to the second loop once a base answers.
 
 **2. Enumerate by response shape, never by status code** - Spring answers `200` with a Whitelabel page, a login page or an SPA shell for paths that do not exist.
 ```bash
@@ -38,7 +43,10 @@ for ep in env health info beans configprops mappings metrics loggers threaddump 
   case "$ctype" in *json*|*octet-stream*)
     grep -qiE 'whitelabel|<html|"status":4' /tmp/zp.body || echo "EXPOSED $code $ctype $B/$ep" ;; esac; done
 ```
-Optional: `nuclei -u "https://$H" -t 'http/exposures/configs/springboot-*.yaml' -rate-limit "$(zp-scope show --json | jq -r '.rate_limit_rps // 5')"`. For an unfound base, hand SecLists `Discovery/Web-Content/spring-boot.txt` to `zp-content-discovery`.
+Optional: `nuclei -u "https://$H" -tags springboot -rate-limit "$(zp-scope show --json | jq -r '.rate_limit_rps // 5')"` - 46 templates
+carry that tag, under `http/misconfiguration/springboot/` plus `http/technologies/springboot-actuator.yaml`. Nothing Spring lives
+in `http/exposures/configs/`, and a `-t` glob matching no file makes nuclei run zero templates and read as "no exposures found".
+For an unfound base, hand SecLists `Discovery/Web-Content/spring-boot.txt` to `zp-content-discovery`.
 
 **3. Read `/env` for names, not values.** Boot 2.6+ masks values whose key matches `password|secret|key|token`
 and Boot 3 masks **every** value by default, so `******` is normal and not a kill - the leak is in what it misses.
@@ -47,7 +55,7 @@ curl -sk "$B/env" > /tmp/zp.env
 grep -oE 'jdbc:[^"]+|mongodb(\+srv)?://[^"]+|amqp://[^"]+|redis://[^"]+|https?://[^"@]+:[^"@]+@[^"]+' /tmp/zp.env | sort -u
 grep -oE '"[A-Za-z0-9_.-]*(url|uri|dsn|endpoint|host|bucket|account|user(name)?|zone|region)"' /tmp/zp.env | sort -u
 ```
-A credential inside a **URI** (`jdbc:postgresql://user:pw@…`, `eureka…defaultZone=http://u:p@…`) sails past every key-name mask - that first grep is the highest-yield line in this skill.
+A credential inside a **URI** (`jdbc:postgresql://user:pw@…`, `eureka…defaultZone=http://u:p@…`) sails past the **key-name** sanitizer - the highest-yield line in this skill on Boot 1.x-2.x. It does not beat Boot 3, whose `show-values: NEVER` default masks the value of every property, URIs included; there the leak is the second grep.
 
 **4. `/heapdump` - prove it, then stop.** It is a live copy of process memory holding session tokens, customer PII
 and plaintext credentials; downloading it is exfiltration and mining it is worse.
@@ -144,7 +152,7 @@ any credential found - a secret in `/env` is reported by **name and location**, 
 |---|---|---|
 | `GET /actuator` with `Accept: application/json` | endpoint registry, `/mappings`, `/beans`, `/sessions` | HAL `_links`, route patterns, live session ids |
 | `GET /env`, `/configprops` | property leak | `jdbc:`/`amqp:`/`user:pw@` URI, or an unmasked key |
-| `GET /httpexchanges` (3.x), `/httptrace` (2.x), `/trace` (1.x) | **other users' requests** | `Cookie`, `Authorization`, `X-Api-Key` that are not yours |
+| `GET /httpexchanges` (3.x), `/httptrace` (2.x), `/trace` (1.x) | **other users' requests** | `Cookie` and session ids that are not yours; `Authorization` and `X-Api-Key` only where the include set was widened |
 | `GET /heapdump` with `-r 0-63`, then `POST /env` with `{}` | memory disclosure, then writability | `JAVA PROFILE 1.0.2` + a large `Content-Length`; **`400`** (exists, parsed) vs `405` vs `401` |
 | `#{7*7}`, `zp#{"a".concat("b")}zp`, and `class.module.classLoader.DefaultAssertionStatus=notabool` | SpEL evaluation, CVE-2022-22965 binder | `49`, `zpabzp` reflected; `400` where a harmless parameter gives `200` |
 | `spring.cloud.function.routing-expression` header on `/functionRouter` | CVE-2022-22963 | expression result, or a `500` naming SpEL |
@@ -167,7 +175,7 @@ any credential found - a secret in `/env` is reported by **name and location**, 
 | `#{7*7}` → `49` in the response | **confirmed SpEL injection. Critical** once the sink is named - `zp-rce-ssti` |
 | Jackson resolves an attacker-supplied type id | **confirmed unsafe polymorphic deserialization. High to Critical**, pending a classpath gadget |
 | H2 console or Jolokia reachable unauthenticated | **confirmed. Critical** - SQL and JMX are one step from RCE |
-| `/env` exposed but every value is `******` | **still a finding, downgraded.** Boot 3 masks by default; names, profiles and URIs remain the impact |
+| `/env` exposed but every value is `******` | **still a finding, downgraded.** Boot 3 masks by default, URI values included; property names, profiles and the exposure itself remain the impact |
 | `/actuator` returns `200` with a Whitelabel, login or SPA page | **not exposed.** The status code lied. Killed |
 | only `/health` and `/info`, `"status":"UP"` | **the documented default. Not a finding.** `show-details=always` leaking hosts is Low, as are `/metrics`, `/beans` and `/mappings` alone - chain material, never Critical |
 | `403` on `/actuator/env` from the edge, `200` via a bypass path | **confirmed authorization bypass**, outranking the leak - `zp-authz` |
@@ -180,8 +188,8 @@ any credential found - a secret in `/env` is reported by **name and location**, 
 ## High-value patterns
 
 - **`/heapdump` on a forgotten staging or acquisition host** from `zp-recon-passive` - the best outcome here, and the one left exposed for years.
-- **`/httpexchanges` on an API gateway** - it buffers the last 100 requests, so one GET hands you other customers' bearer tokens. Higher impact than `/env` and far less hunted.
-- **A credential inside a URI** (`jdbc:`, `eureka…defaultZone`, `mongodb+srv://`) - defeats every key-name mask, Boot 3's included.
+- **`/httpexchanges` on an API gateway** - it buffers the last 100 exchanges, so one GET hands you other customers' cookies and session ids. Higher impact than `/env` and far less hunted. Two defaults bound it: since Boot 2.2 the in-memory repository is not auto-configured, so the endpoint exists only where the app declares an `HttpExchangeRepository`/`HttpTraceRepository` bean, and `Authorization` is recorded only where `authorization-header` was added to the include set. Grade on the headers your capture actually holds, never on the ones you hoped for.
+- **A credential inside a URI** (`jdbc:`, `eureka…defaultZone`, `mongodb+srv://`) - defeats the key-name sanitizer of Boot 1.x-2.x (`keys-to-sanitize`). On Boot 3 it survives only where `show-values` was set to `always` or `when-authorized`.
 - **A renamed management base** - `/manage`, `/management`, `/api/actuator`, or `management.server.port` published through the same ingress. Programs harden `/actuator` and forget the rename.
 - **`/mappings`, Eureka, Config Server or gateway routes** - the route and service map; undocumented admin routes are usually unguarded too, and a blind SSRF becomes a targeted one. Feed `zp-api`, `zp-graphql`, `zp-authz`, `zp-ssrf`.
 - **A rule guarding `/admin/**` but not `/admin`**, or a `permitAll` ordered above the guard, or actuator reachable only through a proxy normalisation difference (`/..;/actuator/env`).

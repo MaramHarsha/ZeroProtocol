@@ -100,8 +100,13 @@ High-value names: `debug`, `test`, `admin`, `is_admin`, `role`, `user_id`, `id`,
 **6. Virtual hosts** - one IP, many sites, and the unlisted ones are often unprotected.
 
 ```bash
+# calibrate against a vhost that does NOT exist, not against the public site - wherever
+# unknown Hosts fall through to a different default, the public site's size filters nothing
+# and all 20,000 words come back as hits
+BASE=$(curl -sk -o /dev/null -w '%{size_download}' -H "Host: zzq1-nope.$H" "https://$H/")
 ffuf -u "https://$H/" -H "Host: FUZZ.$H" -w "$WL/../DNS/subdomains-top1million-20000.txt" \
-     -ac -rate "$RPS" -fs $(curl -sk -o /dev/null -w '%{size_download}' "https://$H/")
+     -ac -rate "$RPS" -fs "$BASE"
+# then re-check every survivor by hand: curl -H "Host: <hit>" and diff against that baseline
 ```
 
 **7. Backup and config exposure** - cheap, and occasionally the whole engagement.
@@ -128,8 +133,8 @@ tree unless the program asks - the exposure is the bug.
 |---|---|
 | 200 with a body distinct from the calibration baseline | real. Verify by hand with curl before it enters the queue |
 | 200 with the baseline size | soft-404. Killed |
-| 403 on a specific path while siblings 404 | **real and interesting** - the path exists and is protected. P1 for `zp-authz` |
-| 401 on an API path | real. P1 |
+| 403 on a specific path while siblings 404 | **real and interesting** - the path exists and is protected. Top lead for `zp-authz`; the bypass is the finding |
+| 401 on an API path | real surface. A lead, not a finding - hand to `zp-authz` |
 | 405 Method Not Allowed | the route exists; try the other verbs |
 | 301 to a login page | the route exists behind auth |
 | identical 200 for every word | you are fuzzing a catch-all SPA route. Fuzz the API prefix instead |

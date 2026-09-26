@@ -81,8 +81,11 @@ zp-intel dedup shopify idor orders customer
 
 | Exit | Meaning | What you do |
 |---|---|---|
-| **8** | likely duplicate(s) found | **read them before writing anything** |
-| 0 | no overlap in the index | continue, but keep checking the sources below |
+| **8** | at least one indexed report shares **>= 50%** of your terms | **read them before writing anything** |
+| 0 | no report crossed that threshold | **read the output anyway** - reports below 50% still print as ` related `, and so does a program with nothing indexed |
+
+The exit code is a threshold, not a verdict: anything branching on it alone will call a
+screen full of adjacent prior art "clean". Read the lines.
 
 A likely-duplicate hit is not automatically fatal. Ask the question that matters: **is yours
 materially different?** A different endpoint, a different parameter, a higher impact, or a bypass

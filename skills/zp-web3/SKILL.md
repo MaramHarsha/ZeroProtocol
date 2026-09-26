@@ -24,12 +24,19 @@ Testnets are also not a free-for-all: use them only if the program names them.
 
 ```bash
 export ETHERSCAN_API_KEY=…
+export ETH_RPC_URL=https://…                                 # or pass --rpc-url on every call
 cast etherscan-source -d src/ 0xCONTRACT --chain mainnet    # verified source, if published
 cast code 0xCONTRACT | head -c 120                           # bytecode if unverified
 cast storage 0xCONTRACT 0                                    # a storage slot
 BLOCK=$(cast block-number)
 echo "pinned at block $BLOCK"
 ```
+
+**Both variables, not one.** Only `cast etherscan-source` is an Etherscan call. `cast code`,
+`cast storage` and `cast block-number` are JSON-RPC, so without `ETH_RPC_URL` (or `--rpc-url`)
+`cast` falls back to a local node at `http://localhost:8545` - they fail with a connection error,
+or worse answer from an unrelated chain, `$BLOCK` comes out empty, and the pinned-block line prints
+nothing. Carry that `$BLOCK` into the fork in step 4 instead of a hardcoded height.
 
 Unverified bytecode means decompilation, a much longer job, and usually a lower expected value
 unless the program specifically wants it.
@@ -86,7 +93,7 @@ contract Poc is Test {
 
     function setUp() public {
         // pin the block so the PoC is reproducible forever
-        vm.createSelectFork(vm.envString("RPC_URL"), 20_000_000);
+        vm.createSelectFork(vm.envString("RPC_URL"), vm.envUint("BLOCK"));
     }
 
     function test_exploit() public {
@@ -97,21 +104,28 @@ contract Poc is Test {
     }
 }
 SOL
-RPC_URL=https://eth-mainnet.g.alchemy.com/v2/KEY forge test -vvv --match-test test_exploit
+RPC_URL="$ETH_RPC_URL" BLOCK="$BLOCK" forge test -vvv --match-test test_exploit
 ```
 
 A good PoC: pins the block, states the invariant it breaks, prints the quantified loss, and is the
-**minimum** sequence that does it. Quantified loss is what sets the payout on Immunefi-style
-programs, so compute it - funds at risk, not just "it is possible".
+**minimum** sequence that does it. Write the pinned block number out literally in the report as well
+as passing it in - a triager running your test does not have your shell. Quantified loss is what sets
+the payout on Immunefi-style programs, so compute it - funds at risk, not just "it is possible".
 
 **5. Severity, in the terms these programs use.**
 
 ```
 Critical   direct theft or permanent freezing of principal; unauthorised minting; governance takeover
-High       theft of unclaimed yield/fees; temporary freezing; griefing with real cost
-Medium     contract fails under specific conditions; recoverable value loss
+High       theft of unclaimed yield/fees; PERMANENT freezing of unclaimed yield; temporary freezing of funds
+Medium     griefing (damage with no attacker profit); block stuffing; theft of gas; unbounded gas
+           consumption; contract inoperable for lack of token funds; recoverable value loss
 Low        informational, gas, best-practice
 ```
+
+That is Immunefi's published Smart Contract scale, and **griefing sits at Medium** on it - label a
+griefing report High and triage downgrades it on sight. Griefing rises above Medium only when it
+also lands a higher listed impact: it permanently freezes funds, or it renders the contract
+inoperable. Read the program's own severity page too; some use a modified scale.
 
 State explicitly: funds at risk, preconditions (attacker capital, a particular market state, a
 specific block), and whether it is atomic or needs several transactions.

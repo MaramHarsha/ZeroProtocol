@@ -160,7 +160,8 @@ Retrieve one row to prove readability, then stop.
 | no rate limit on login/OTP/reset | real finding. Report the absence, do not brute-force |
 | no rate limit on a read endpoint | usually Low or N/A |
 | `OPTIONS` reveals allowed methods | informational |
-| 401 everywhere with a valid token | correctly scoped. Killed |
+| 401 everywhere, including on your **own** objects | the credential is not being accepted at all - fix the harness (audience, issuer, tenant, header name, `Bearer` vs `apikey` vs cookie) before concluding anything |
+| your own objects succeed, other tenants' return 403 or 404 | correctly scoped. Killed |
 
 ---
 

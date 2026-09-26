@@ -36,11 +36,13 @@ curl -sk --max-time 15 "https://$H/socket.io/?EIO=4&transport=polling" | head -c
 ```
 
 **2. Probe the upgrade by hand.** Any curl can do this over `https://`; you are reading the 101,
-not speaking the framed protocol.
+not speaking the framed protocol. **Never `-I`**: it sends `HEAD`, RFC 6455 requires `GET`, and the
+servers enforce it (`ws` 400s, gorilla says `request method is not GET`) - a false negative on a
+live endpoint. Dump headers with `-D -`, and pin `--http1.1`, because a 101 does not exist in h2.
 
 ```bash
 KEY=$(head -c16 /dev/urandom | base64)
-curl -skI --max-time 15 "https://$H/ws" \
+curl -sk -D - -o /dev/null --http1.1 --max-time 15 "https://$H/ws" \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
   -H "Sec-WebSocket-Key: $KEY" | head -20
 ```
@@ -69,9 +71,12 @@ Check them in this order and you will kill most candidates in two minutes.
 | **no unpredictable per-connection value** in the handshake | no `?token=`, no nonce in the path, no bearer in `Sec-WebSocket-Protocol`, no auth in the first app frame | attacker cannot forge it - dead |
 | the session cookie is reachable cross-site | `curl -skI "https://$H/" \| grep -io 'samesite=[a-z]*'` | `SameSite=Lax` or `Strict` are **not** sent on a WebSocket upgrade - dead in a modern browser |
 
-`SameSite` is the modern killer of this class. A cookie with no `SameSite` attribute defaults to
-`Lax` in current Chrome and Firefox, so a bare "no Origin check" report is usually not exploitable
-today. Confirm `SameSite=None` (or an old-browser-only claim you state as such) before you write.
+Cross-site cookie policy is the modern killer of this class - name the right mechanism. Chromium
+treats an attribute-less cookie as `SameSite=Lax`; Firefox has not shipped Lax-by-default in
+release, and instead Total Cookie Protection partitions third-party cookies per top-level site, so
+your page gets its own jar rather than the victim's session; Safari blocks third-party cookies
+outright. Either way a bare "no Origin check" report is usually not exploitable today: confirm
+`SameSite=None` (or state an old-browser-only claim as such) before you write.
 
 **4. Probe Origin enforcement.** Real clients, one variable at a time.
 
@@ -150,7 +155,7 @@ the payloads you would send over HTTP, then look for the result elsewhere.
 
 ```bash
 websocat -k -n --protocol "chat, bearer.$TOK_A" "wss://$H/ws" </dev/null 2>&1 | head -3
-curl -skI "https://$H/ws" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+curl -sk -D - -o /dev/null --http1.1 --max-time 15 "https://$H/ws" -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $KEY" -H 'Sec-WebSocket-Protocol: admin, chat' \
   | grep -i 'sec-websocket-protocol'
 ```

@@ -116,8 +116,17 @@ patched issue is a **new** bug and often pays well.
 
 ## Severity
 
-Score what you proved. Match the version to the platform: HackerOne uses CVSS 3.1;
-Bugcrowd, Intigriti and Immunefi generally use 4.0 or their own taxonomy.
+Score what you proved, in the system the platform actually pays on - which is not always CVSS:
+
+- **HackerOne** - CVSS 3.1 vector; the score you set is a proposal, not a decision.
+- **Bugcrowd** - map to a VRT category (P1-P5) first, because the Vulnerability Rating Taxonomy is
+  what drives the payout. CVSS 4.0 is the secondary framing.
+- **Intigriti / YesWeHack** - their own severity matrix, with the business impact spelled out.
+  Check which CVSS version the submission form asks for before you write a vector.
+- **Immunefi** - their impact/severity classification, not CVSS, plus funds at risk.
+
+`zp-report`'s per-platform table is the single source of truth here; if this list ever drifts from
+it, follow `zp-report`.
 
 | Band | Shape |
 |---|---|

