@@ -48,4 +48,11 @@ Those reports come from the Internet Bug Bounty, curl, Node.js and similar open-
 programs, and the work is fuzzing and crash triage, not a web pipeline. `zp-intel priors --gaps`
 lists it. If the target is a native codebase, say this pack does not cover it.
 
+**The library is the other half.** `intel/writeups-index.jsonl.gz` ships 138,400 distinct public
+write-ups from 97 sources (titles and source links, never body text - 97 sources means 97
+licences). `zp-corpus search` finds which one to read; you then **fetch that URL**. A result is a
+reading list, not an answer, and a title is not a technique. Nobody using this pack has to scrape
+anything. Exit 2 means the index is missing - say the capability is unavailable rather than
+answering from memory. Contract: `intel/SCHEMA.md`.
+
 See [[zp-operating-rules]], [[zp-stop-points]], [[zp-workspace]].

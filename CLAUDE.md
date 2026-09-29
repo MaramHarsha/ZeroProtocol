@@ -1,7 +1,7 @@
 # ZeroProtocol
 
 This repository is **ZeroProtocol**: a unified skill pack for authorized bug-bounty and
-web-security work. Sixty-six `zp-*` skills behind one router skill, plus six helper
+web-security work. Sixty-seven `zp-*` skills behind one router skill, plus seven helper
 programs that make the authorization boundary mechanical instead of aspirational.
 
 ## If the user just cloned this and said "check this" / "set this up" / "install this"
@@ -57,7 +57,7 @@ The short version of what that skill enforces:
 ## Repository layout
 
 ```
-skills/            67 skills: zeroprotocol (router) + 66 zp-*
+skills/            68 skills: zeroprotocol (router) + 67 zp-*
 .claude/agents/    5 agents, each carrying the scope contract
 bin/zp-scope       the authorization gate - exit codes are the contract
 bin/zp-doctor      toolchain survey: what works, what degrades, how it degrades

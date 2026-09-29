@@ -35,16 +35,22 @@ scope to test at all.
 
 ## Procedure
 
-0. **Calibrate in one command**, before you touch the surface:
+0. **Calibrate and read prior art**, before you touch the surface:
 
    ```bash
-   zp-intel priors <class>          # measured base rates for your class
+   zp-intel priors <class>                                  # measured base rates
+   zp-corpus search --class <class> --since 2023 --limit 8  # public write-ups to read
    ```
 
-   It tells you what the disclosure record expects of a report in this class. A class with a low
-   `paid` rate means the bar is the impact story, not the payload - plan for the evidence you will
-   need to clear it. A rising class means triage is currently accepting it. This costs seconds and
-   changes what you spend the hour on.
+   `priors` tells you what the disclosure record expects of a report in this class: a low `paid`
+   rate means the bar is the impact story, not the payload, so plan for the evidence you need to
+   clear it. A rising class means triage is currently accepting it.
+
+   `zp-corpus` returns a **reading list** of public write-ups, shipped with the pack. If one looks
+   like your surface, **fetch its URL and read it** - the index holds titles and links, not text,
+   and a title is not a technique. Never report something you inferred from a title.
+
+   Ten minutes here is the cheapest depth you will get, and it changes what you spend the hour on.
 1. **Load your class's skill** - `skills/zp-<class>/SKILL.md`. It holds the procedure, the payload
    tables, the confirm-or-kill criteria and the pitfalls. Follow it; do not improvise a method.
 2. **Read the surface first** - `.zeroprotocol/surface/` and `queue.md`. Test what is there, not

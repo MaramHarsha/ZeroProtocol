@@ -28,6 +28,12 @@ zp-intel stats          # what is in it
 zp-intel update         # refresh from upstream
 ```
 
+**Which tool for which question.** `zp-intel` is about *this program and this finding*: has it
+been reported, what pays here, what are the base rates. **`zp-corpus` is the library** - 138,400
+public write-ups, for *how has this class, CVE or stack been written up before*. Reach for
+`zp-corpus` when you want to read how someone found a bug; reach for `zp-intel` when you want to
+know whether yours is a duplicate or worth writing up.
+
 ---
 
 ## The calibration layer - `zp-intel priors`

@@ -22,6 +22,21 @@ import json
 import os
 import shutil
 import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+# Data the pack ships so nobody has to scrape or fetch it. A missing file is a real capability
+# loss, not cosmetic: the skills must say the capability is unavailable rather than answering
+# from memory and calling it prior art.
+DATA_FILES = [
+    ("write-up index", "intel/writeups-index.jsonl.gz",
+     "zp-corpus will exit 2. Rebuild: python3 scripts/build_writeups_index.py --corpus <dir>"),
+    ("class priors", "intel/class-priors.csv",
+     "zp-intel priors will fail. Rebuild: python3 scripts/build_class_priors.py --corpus <dir>"),
+    ("disclosed-report index", "intel/hackerone-reports.csv",
+     "zp-intel dedup/program will fail. Fetch it: zp-intel update"),
+]
 
 # name, phase, tier, purpose, install, fallback
 #   tier: core   = ZeroProtocol assumes it; almost always already present
@@ -297,6 +312,18 @@ def main(argv=None) -> int:
                 print(f"{'':13s}install:  {r['install']}")
                 print(f"{'':13s}without:  {r['fallback'] or 'nothing - this one is required'}")
         print()
+
+    print("  shipped data")
+    for label, rel, hint in DATA_FILES:
+        path = REPO / rel
+        if path.is_file():
+            size = path.stat().st_size
+            human = f"{size / 1e6:.1f} MB" if size >= 1e6 else f"{size / 1e3:.0f} KB"
+            print(f"    ok       {label:22} {human:>8}  {rel}")
+        else:
+            print(f"    MISSING  {label:22} {rel}")
+            print(f"{'':13s}{hint}")
+    print()
 
     caps = capability_report(rows)
     print("  capabilities")

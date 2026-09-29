@@ -32,6 +32,38 @@ this right matters more to us than being brief.
 | [nomi-sec/PoC-in-GitHub](https://github.com/nomi-sec/PoC-in-GitHub) | CC0-1.0 | fetched by `zp-reports sync poc` |
 | [trickest/cve](https://github.com/trickest/cve) | MIT | fetched by `zp-reports sync trickest` |
 | [reddelexc/hackerone-reports](https://github.com/reddelexc/hackerone-reports) | **no licence stated** | **not redistributed.** `zp-intel update` fetches it to your machine on first use. See below. |
+| `intel/writeups-index.jsonl.gz` — 138,400 write-up **titles and links** from 97 public sources | ZeroProtocol's own compilation of factual metadata | **committed.** No body text from any source. See below. |
+
+### The write-up index: what is shipped, and why that is a different thing
+
+`intel/writeups-index.jsonl.gz` is ZeroProtocol's own compilation, built by
+`scripts/build_writeups_index.py`. Each record holds a **title, a canonical link** to the
+original publisher, and factual labels (source name, publication date, program, weakness label,
+CVE ids, whether a bounty was publicly disclosed).
+
+What it does **not** contain, by construction rather than by promise — the builder asserts on
+every record that these never reach the output:
+
+- no body text, no excerpts, no quotations, no screenshots
+- no severity field (the sources label severity incompatibly; see `intel/SCHEMA.md`)
+- no upstream dataset file, arrangement or commentary re-hosted
+
+The reasoning: a title and a URL are facts about a public disclosure, independently verifiable at
+the source. The prose is the copyrighted work of the researcher who wrote it, and it stays with
+them. The index is a card catalogue; reading a write-up means fetching its URL from the publisher,
+which is what `zp-corpus` tells you to do and what the `zp-corpus` skill is built around.
+
+Deduplication by canonical URL had a useful side effect worth recording: every record that came
+*only* from a curated link-list — `reddelexc/hackerone-reports`, the various `awesome-*` lists,
+`pentester-land` — was collapsed away, because the same disclosures are reachable directly. Those
+compilations contribute **zero** records to the shipped index.
+
+**If you publish one of the indexed sources and would rather not be indexed**, open an issue and
+it will be removed. The mechanism already exists and is one command:
+
+```bash
+python3 scripts/build_writeups_index.py --corpus <dir> --exclude-source <your-source>
+```
 
 ### Why the HackerOne index is fetched rather than shipped
 

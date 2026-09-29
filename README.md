@@ -4,8 +4,8 @@
 
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **67 Claude Code skills**,
-**5 agents**, **15 slash commands** and six helper programs. Clone it, ask Claude to check it, give it a target.
+One protocol for authorized bug-bounty and web-security work, as **68 Claude Code skills**,
+**5 agents**, **16 slash commands** and seven helper programs. Clone it, ask Claude to check it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
 `zp-scope check` and obeys the exit code, so an out-of-scope host is refused mechanically rather
@@ -51,12 +51,13 @@ up anything it would displace, and `./install.sh --remove` undoes all of it.
 Or just open Claude Code in this directory and say **"check this"** — `CLAUDE.md` tells Claude
 what to do.
 
-## The 67 skills
+## The 68 skills
 
 | | |
 |---|---|
 | **router** | `zeroprotocol` — owns the pipeline, the ranking, and the dispatch table |
 | **gate & setup** | `zp-scope` `zp-toolchain` `zp-proxy` |
+| **prior art** | `zp-corpus` — 138,400 shipped write-ups · `zp-intel` — dedup, program priors, measured class base rates |
 | **recon** | `zp-recon-passive` `zp-recon-active` `zp-content-discovery` `zp-js-secrets` `zp-takeover` |
 | **injection** | `zp-xss` `zp-sqli` `zp-rce-ssti` `zp-xxe-lfi` `zp-upload` `zp-proto-pollution` |
 | **access control** | `zp-idor` `zp-authz` `zp-jwt-oauth` |
@@ -84,13 +85,14 @@ pitfalls that make reports get closed.
 Each re-checks `zp-scope` itself, because a subagent inherits none of the session's discipline.
 The validator enforces that: an agent with network-capable tools and no gate is a hard error.
 
-## The six helper programs
+## The seven helper programs
 
 ```bash
 zp-scope check https://api.target.com/v1   # 0 allow · 1 deny · 3 unconfirmed · 4 no scope file
 zp-doctor                                  # what works on this box, and how it degrades
 zp-init target.com                         # scaffold .zeroprotocol/
 zp-intel priors --sort trend               # measured base rates; dedup and program priors
+zp-corpus search <terms>                   # 138,400 shipped write-ups: find one, fetch its url
 zp-reports                                 # the exploit and CVE corpus tooling
 zp-memory-seed                             # seed the operating notes into this project's memory
 ```
@@ -104,6 +106,27 @@ because nobody signed off on the new hosts.
 required tooling beyond `python3 curl dig git openssl jq`; everything else has a documented
 fallback, and where there is no honest fallback (`nuclei`) the skills say the capability is
 unavailable rather than substituting a weaker check and calling it coverage.
+
+## The write-up library ships with it — nobody scrapes anything
+
+`intel/writeups-index.jsonl.gz` holds **138,400 distinct public security write-ups** from 97
+sources (1995–today, 5.7 MB): HackerOne disclosures, vendor advisories, researcher blogs, CTF
+write-ups, security audits, Exploit-DB and the GitHub Advisory Database.
+
+```bash
+zp-corpus search idor graphql              # find which write-up to read
+zp-corpus search --class ssrf --since 2023 # by ZeroProtocol class name
+zp-corpus search --cve CVE-2024-3400       # everything indexed mentioning a CVE
+zp-corpus show ajaysenr-h1:984965          # one record, and the URL to fetch
+```
+
+It holds **titles and source links, never body text**. 97 sources means 97 licences, and the
+prose belongs to the researchers who wrote it — so the workflow is two steps: search to find
+*which* write-up to read, then fetch that URL and read it at the source. A result is a reading
+list, not an answer; inferring a technique from a title is the failure mode `zp-corpus` exists to
+prevent. Licensing reasoning and the removal path are in [`NOTICE.md`](NOTICE.md); the field-by-field
+contract, including why there is deliberately no severity field, is in
+[`intel/SCHEMA.md`](intel/SCHEMA.md).
 
 ## Calibrated on the disclosure record
 

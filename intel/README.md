@@ -1,8 +1,45 @@
-# intel/ — disclosed-report index and measured class priors
+# intel/ — the shipped prior-art layer
 
-Two files, two jobs. `hackerone-reports.csv` answers *has this specific bug been reported on
-this program* (dedup and prior art). `class-priors.csv` answers *which classes are actually
-being disclosed now, and which ones get closed without a bounty* (calibration).
+Three files, three jobs. The field-by-field data contract is in [`SCHEMA.md`](SCHEMA.md); read
+that before aggregating anything.
+
+| File | Answers | Rows |
+|---|---|---|
+| `writeups-index.jsonl.gz` | *which public write-up should I read about X, and where is it* | 138,400 |
+| `class-priors.csv` | *which classes are disclosed now, and which get closed without a bounty* | 68 |
+| `hackerone-reports.csv` | *has this specific bug been reported on this program* | 14,972 |
+
+The first two **ship in the repo**. `hackerone-reports.csv` is gitignored and **fetched** by
+`zp-intel update` on first use, because its upstream states no licence — see `NOTICE.md`.
+`zp-doctor` reports which of the three are present.
+
+## writeups-index.jsonl.gz — the library
+
+138,400 distinct public write-ups from 97 sources, 1995 to today, 5.7 MB gzipped. HackerOne
+disclosures, vendor advisories, researcher blogs, CTF write-ups, security audits, Exploit-DB and
+the GitHub Advisory Database. Query it with `zp-corpus`.
+
+**It ships in the repo so that nobody using this pack ever has to scrape anything.** That is the
+whole point of it existing.
+
+**It holds a title and a source link per write-up, and no body text.** 97 sources means 97
+licences — researcher blogs, HackerOne reports owned by their authors, vendor advisories, CTF
+write-ups. Titles and URLs are factual metadata about public disclosures; the prose is not ours
+to redistribute. So the workflow is two steps: search the index to find *which* write-up to read,
+then fetch that one URL and read it at the source. A search result is a reading list, not an
+answer.
+
+Per-record fields, what is always present, and the two fields that will mislead you if you trust
+them naively (`date` and the deliberately absent `severity`): see [`SCHEMA.md`](SCHEMA.md).
+
+Rebuild from a local corpus of write-up metadata:
+
+```bash
+python3 scripts/build_writeups_index.py --corpus <dir>
+```
+
+Stdlib only. It reads metadata fields, asserts on every record that no body or severity field
+leaked into the output, and never writes text.
 
 ## class-priors.csv — the calibration layer
 

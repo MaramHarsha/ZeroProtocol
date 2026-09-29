@@ -1,11 +1,11 @@
 ---
 name: zeroprotocol
-description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its 66 zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
+description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its 67 zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
 ---
 
 # ZeroProtocol
 
-One protocol over 66 focused skills. You are handed a target; you return
+One protocol over 67 focused skills. You are handed a target; you return
 reproduced, in-scope, impact-bearing findings written the way a triager wants to read
 them - or you return an honest, evidenced "nothing here", which is also a result.
 
@@ -48,6 +48,7 @@ mapping. The numbering is the order of first traversal and the order the gates f
 | 0 | Engagement setup | this skill | none | `.zeroprotocol/notes.md` with mode + objective |
 | 1 | Scope + authorization | `zp-scope` | none | `scope.yaml` with `confirmed: true` |
 | 1b | Toolchain survey | `zp-toolchain` | none | known capability set, fallbacks chosen |
+| 1b2 | Prior-art library | `zp-corpus` | none - local index, public links | a reading list for the classes you chose |
 | 1c | Browser | `zp-browser` | none to install; scope-gated to navigate | a JS engine, or an honest `no browser` record |
 | 2 | Passive recon | `zp-recon-passive` | scope file exists (confirmation not required) | `surface/hosts.txt`, `surface/urls.txt` |
 | 3 | Active recon | `zp-recon-active` | **scope confirmed** | `surface/live.jsonl`, `surface/tech.md` |
@@ -94,10 +95,16 @@ two** vuln classes. "Just looking around" is the most expensive mode there is.
 ### Priors - two minutes that reshape the session
 
 ```bash
-zp-intel program <handle>      # what actually gets found and paid on this program
-zp-intel class <class>         # how accepted reports of a class were framed
-zp-intel priors --sort trend   # which classes the field is currently paying for
+zp-intel program <handle>          # what actually gets found and paid on this program
+zp-intel class <class>             # how accepted reports of a class were framed
+zp-intel priors --sort trend       # which classes the field is currently paying for
+zp-corpus search --program <h>     # every public write-up about this target, 97 sources
+zp-corpus search --class <c> --since 2023   # how the class is currently being found
 ```
+
+`zp-corpus` ships 138,400 public write-ups in the repo, so nothing has to be scraped. It holds
+titles and links, not text: **fetch the URL of anything that looks relevant and read it.** A
+search result is a reading list, not an answer - see `zp-corpus`.
 
 A class that appears repeatedly in a program's disclosures means the codebase has a *pattern* of
 it - hunt the siblings nobody reported, and check whether shipped fixes still hold. A bypass of a
@@ -237,6 +244,7 @@ Then dispatch in this order:
 | a proxy is running, or a captured traffic corpus exists | `zp-proxy` |
 | a client-side class needs execution proof, or a route only exists after JS | `zp-browser` |
 | a version banner, dependency manifest, or an edge appliance is fingerprinted | `zp-cve` |
+| prior art is needed - how this class, CVE, stack or program has been written up before | `zp-corpus` |
 | internal red-team / adversary emulation is contemplated (AD, Entra, Okta, lateral movement) | `zp-redteam-mode` |
 | cPanel/WHM exposed (ports 2082/2083/2086/2087, `cpsrvd`, `whostmgrsession`) | `zp-cve-2026-41940` |
 | LightRAG / `lightrag-hku` server (port 9621, `LightRAG Server API`), or any self-hosted RAG/LLM API server | `zp-cve-lightrag` |
@@ -392,7 +400,7 @@ seed notes; `zp-memory-seed` copies them in.
 
 ## Skill index
 
-**Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`
+**Gate and setup** - `zp-scope`, `zp-toolchain`, `zp-proxy`, `zp-browser`, `zp-intel`, `zp-corpus`
 **Recon** - `zp-recon-passive`, `zp-recon-active`, `zp-content-discovery`, `zp-js-secrets`, `zp-takeover`, `zp-info-disclosure`, `zp-tls`
 **Injection** - `zp-xss`, `zp-sqli`, `zp-rce-ssti`, `zp-xxe-lfi`, `zp-upload`, `zp-proto-pollution`, `zp-ldap-xpath`
 **Access control** - `zp-idor`, `zp-authz`, `zp-jwt-oauth`, `zp-session`, `zp-csrf`, `zp-captcha`, `zp-rate-limit`

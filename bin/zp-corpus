@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""zp-corpus - find public write-ups about a technique, target or CVE, then read them at source.
+
+138,400 distinct public write-ups from 97 sources: HackerOne disclosures, vendor advisories,
+researcher blogs, CTF write-ups, audit reports, Exploit-DB and the GitHub Advisory Database.
+Ships with the pack, so nobody has to scrape anything.
+
+THE INDEX HOLDS TITLES AND LINKS, NEVER BODY TEXT. That is deliberate. 97 sources means 97
+licences, and the prose belongs to the researchers who wrote it. So this tells you WHICH
+write-up to read and WHERE it is; you then fetch that one URL and read it at the source. A
+`search` result is a reading list, not an answer.
+
+    zp-corpus search idor graphql              find write-ups by title terms
+    zp-corpus search --class ssrf --since 2023 filter instead of / alongside terms
+    zp-corpus search --cve CVE-2024-3400       everything indexed about one CVE
+    zp-corpus search --program shopify         what has been written up about a program
+    zp-corpus show exploit-db:51234            one record, and the URL to fetch
+    zp-corpus sources                          the 97 sources and what each contributes
+    zp-corpus stats                            what is in the index
+
+Every subcommand takes --json for machine use.
+
+EXIT CODES - branch on these, do not parse the prose:
+    0   results found
+    1   usage or runtime error
+    2   the index is not installed (say so; do not answer from memory instead)
+    4   the query ran and matched nothing (this is an answer, not a failure)
+
+Stdlib only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+INDEX = REPO / "intel" / "writeups-index.jsonl.gz"
+
+OK, ERR, NO_INDEX, NO_MATCH = 0, 1, 2, 4
+
+# ZeroProtocol class names -> the vocabulary the sources actually use. Same intent as the
+# table in zp-intel, kept local so this program stays standalone.
+CLASS_ALIASES = {
+    "xss": ["cross-site scripting", "xss"],
+    "sqli": ["sql injection", "sqli"],
+    "idor": ["insecure direct object", "idor", "improper access control"],
+    "authz": ["improper access control", "privilege escalation", "improper authorization",
+              "incorrect authorization"],
+    "ssrf": ["server-side request forgery", "ssrf"],
+    "rce": ["code injection", "command injection", "remote code execution", "os command"],
+    "ssti": ["template injection", "ssti"],
+    "xxe": ["xml external entit", "xxe"],
+    "lfi": ["path traversal", "file inclusion", "directory traversal"],
+    "csrf": ["cross-site request forgery", "csrf"],
+    "cors": ["cross-origin", "cors"],
+    "open-redirect": ["open redirect"],
+    "takeover": ["subdomain takeover", "domain takeover"],
+    "upload": ["unrestricted upload", "file upload"],
+    "jwt-oauth": ["improper authentication", "oauth", "authentication bypass", "jwt", "saml"],
+    "session": ["session"],
+    "business-logic": ["business logic", "violation of secure design"],
+    "race": ["race condition", "time-of-check"],
+    "smuggling": ["request smuggling", "response splitting"],
+    "cache-poison": ["cache poisoning", "cache deception"],
+    "deser": ["deserialization"],
+    "proto-pollution": ["prototype pollution", "assumed-immutable"],
+    "graphql": ["graphql"],
+    "info-disclosure": ["information disclosure", "information exposure", "misconfiguration"],
+    "rate-limit": ["resource consumption", "restriction of authentication", "brute force"],
+    "crlf": ["crlf"],
+    "tls": ["certificate validation", "cleartext transmission", "cryptographic"],
+    "memory-safety": ["memory corruption", "use after free", "buffer over", "out-of-bounds",
+                      "double free", "integer overflow", "null pointer"],
+}
+
+
+def load() -> list[dict]:
+    if not INDEX.is_file():
+        print(f"zp-corpus: no index at {INDEX}", file=sys.stderr)
+        print("           it ships with the repo - restore it, or rebuild with:",
+              file=sys.stderr)
+        print("           python3 scripts/build_writeups_index.py --corpus <dir>",
+              file=sys.stderr)
+        sys.exit(NO_INDEX)
+    try:
+        with gzip.open(INDEX, "rt", encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+    except OSError as exc:
+        print(f"zp-corpus: cannot read {INDEX}: {exc}", file=sys.stderr)
+        sys.exit(NO_INDEX)
+
+
+def haystack(rec: dict) -> str:
+    return " ".join([rec.get("title", ""), rec.get("weakness", ""), rec.get("program", ""),
+                     rec.get("source", ""), " ".join(rec.get("cves") or [])]).lower()
+
+
+def score(rec: dict, terms: list[str]) -> int:
+    """Title hits count most: it is the part a human wrote to describe the finding."""
+    if not terms:
+        return 1
+    title = rec.get("title", "").lower()
+    rest = " ".join([rec.get("weakness", ""), rec.get("program", ""),
+                     " ".join(rec.get("cves") or [])]).lower()
+    total = 0
+    for t in terms:
+        if t in title:
+            total += 3
+        elif t in rest:
+            total += 1
+    return total
+
+
+def matches(rec: dict, args, terms: list[str]) -> bool:
+    hay = haystack(rec)
+    if terms:
+        hit = any if args.any else all
+        if not hit(t in hay for t in terms):
+            return False
+    if args.source and args.source.lower() not in rec.get("source", "").lower():
+        return False
+    if args.program and args.program.lower() not in rec.get("program", "").lower():
+        return False
+    if args.cve:
+        want = args.cve.upper()
+        if not any(want in c.upper() for c in (rec.get("cves") or [])):
+            return False
+    if args.bounty and not rec.get("bounty"):
+        return False
+    if args.since:
+        # 25,636 records have no publication date - only a scrape time, which we refuse to
+        # pass off as one. A date filter therefore cannot speak for them, so it excludes
+        # them. `stats` prints the count so this is never a silent loss.
+        if not rec.get("date") or rec["date"] < args.since:
+            return False
+    if args.klass:
+        key = args.klass.lower().removeprefix("zp-")
+        needles = CLASS_ALIASES.get(key, [key])
+        field = (rec.get("weakness", "") + " " + rec.get("title", "")).lower()
+        if not any(n in field for n in needles):
+            return False
+    return True
+
+
+def render(rows: list[dict], args, note: str) -> int:
+    if args.json:
+        print(json.dumps({"matched": len(rows), "returned": min(len(rows), args.limit),
+                          "body_text": "not stored locally - fetch each result's url to read it",
+                          "results": rows[:args.limit]}, indent=2))
+        return OK if rows else NO_MATCH
+    if not rows:
+        print(f"\n  no match in 138,400 indexed write-ups.\n"
+              f"  That is an answer, not a failure - but it only means nothing INDEXED matches.\n"
+              f"  Widen it: fewer terms, --any, drop --since, or try the class alias "
+              f"(--class idor).\n")
+        return NO_MATCH
+    print(f"\n  {len(rows):,} match · showing {min(len(rows), args.limit)}{note}\n")
+    for r in rows[:args.limit]:
+        bits = [r.get("date", "")[:10] or "          ", f"{r['source'][:22]:22}"]
+        if r.get("bounty"):
+            bits.append("$")
+        print(f"  {' '.join(bits)}  {r['title'][:96]}")
+        tags = []
+        if r.get("program"):
+            tags.append(f"program: {r['program']}")
+        if r.get("weakness"):
+            tags.append(r["weakness"])
+        if r.get("cves"):
+            cves = r["cves"]
+            if args.cve:
+                # Show the CVE that matched first, or a record with eight of them looks like
+                # a false positive when the display truncates past the one you asked for.
+                want = args.cve.upper()
+                cves = ([c for c in cves if want in c.upper()]
+                        + [c for c in cves if want not in c.upper()])
+            shown = " ".join(cves[:4])
+            tags.append(shown + (f" (+{len(cves) - 4})" if len(cves) > 4 else ""))
+        if tags:
+            print(f"      {' · '.join(tags)[:110]}")
+        print(f"      {r['url']}")
+        print(f"      id: {r['id']}")
+    print("\n  The index holds titles and links only. To read one, FETCH ITS URL - the body")
+    print("  text is not stored locally and is not ours to redistribute.\n")
+    return OK
+
+
+def cmd_search(args) -> int:
+    terms = [t.lower() for t in (args.terms or []) if t.strip()]
+    if not terms and not any([args.source, args.program, args.cve, args.klass,
+                              args.bounty, args.since]):
+        print("zp-corpus search: give search terms or at least one filter", file=sys.stderr)
+        return ERR
+    rows = [r for r in load() if matches(r, args, terms)]
+    # Newest first, then a stable re-sort by score, so equally-good title matches come back
+    # most-recent-first rather than in file order.
+    rows.sort(key=lambda r: r.get("date", ""), reverse=True)
+    if terms:
+        rows.sort(key=lambda r: -score(r, terms))
+    note = " (newest first)" if not terms else " (best title match, then newest)"
+    return render(rows, args, note)
+
+
+def cmd_show(args) -> int:
+    rows = [r for r in load() if r["id"] == args.id]
+    if not rows:
+        near = [r for r in load() if args.id.lower() in r["id"].lower()][:5]
+        if args.json:
+            print(json.dumps({"found": False, "id": args.id,
+                              "did_you_mean": [r["id"] for r in near]}, indent=2))
+        else:
+            print(f"\n  no record with id {args.id!r}")
+            if near:
+                print("  did you mean:")
+                for r in near:
+                    print(f"    {r['id']}  {r['title'][:70]}")
+            print()
+        return NO_MATCH
+    rec = rows[0]
+    if args.json:
+        print(json.dumps({**rec,
+                          "body_text": "not stored locally - fetch `url` to read this write-up"},
+                         indent=2))
+        return OK
+    print(f"\n  {rec['title']}\n")
+    for label, key in (("id", "id"), ("source", "source"), ("date", "date"),
+                       ("program", "program"), ("weakness", "weakness")):
+        if rec.get(key):
+            print(f"  {label:9} {rec[key]}")
+    if rec.get("cves"):
+        print(f"  {'cves':9} {' '.join(rec['cves'])}")
+    if rec.get("bounty"):
+        print(f"  {'bounty':9} a bounty was publicly disclosed (amount not recorded here)")
+    print(f"  {'url':9} {rec['url']}")
+    print("\n  FETCH THAT URL to read the write-up. The text is not stored locally.\n")
+    return OK
+
+
+def cmd_sources(args) -> int:
+    rows = load()
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["source"]] = counts.get(r["source"], 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: -kv[1])
+    if args.json:
+        print(json.dumps({"sources": len(ordered), "writeups": len(rows),
+                          "counts": dict(ordered)}, indent=2))
+        return OK
+    print(f"\n  {len(ordered)} sources · {len(rows):,} write-ups\n")
+    for src, n in ordered[:args.limit]:
+        print(f"  {n:>7,}  {src}")
+    if len(ordered) > args.limit:
+        print(f"\n  ... {len(ordered) - args.limit} more (--limit to see them)")
+    print()
+    return OK
+
+
+def cmd_stats(args) -> int:
+    rows = load()
+    weak = sum(1 for r in rows if r.get("weakness"))
+    prog = sum(1 for r in rows if r.get("program"))
+    cve = sum(1 for r in rows if r.get("cves"))
+    paid = sum(1 for r in rows if r.get("bounty"))
+    dates = sorted(r["date"] for r in rows if r.get("date"))
+    undated = len(rows) - len(dates)
+    srcs = len({r["source"] for r in rows})
+    if args.json:
+        print(json.dumps({"writeups": len(rows), "sources": srcs, "with_weakness": weak,
+                          "with_program": prog, "with_cve": cve, "with_bounty": paid,
+                          "dated": len(dates), "undated": undated,
+                          "earliest": dates[0] if dates else None,
+                          "latest": dates[-1] if dates else None,
+                          "body_text": "never stored - titles and links only",
+                          "severity": "not indexed - sources disagree; read the url"},
+                         indent=2))
+        return OK
+    print(f"\n  {len(rows):,} distinct public write-ups from {srcs} sources")
+    if dates:
+        print(f"  {dates[0]} to {dates[-1]}")
+    print(f"\n  {cve:>7,} carry a CVE id")
+    print(f"  {prog:>7,} name a bug bounty program")
+    print(f"  {weak:>7,} carry a weakness label  (these back `zp-intel priors`)")
+    print(f"  {paid:>7,} record that a bounty was publicly disclosed")
+    print(f"  {len(dates):>7,} carry a real publication date")
+    print(f"  {undated:>7,} have NO date - their source gave only a scrape time, which this")
+    print("          index refuses to pass off as a publication date. `--since` therefore")
+    print("          cannot include them.")
+    print("\n  Titles and links only - no body text, and no severity field, because the")
+    print("  sources do not label severity comparably. See intel/SCHEMA.md.\n")
+    return OK
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="zp-corpus", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", help="machine-readable output")
+    common.add_argument("--limit", type=int, default=20)
+    sub = ap.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("search", parents=[common], help="find write-ups by terms and filters")
+    p.add_argument("terms", nargs="*")
+    p.add_argument("--source", help="restrict to one source")
+    p.add_argument("--program", help="restrict to a bug bounty program")
+    p.add_argument("--cve", help="everything indexed about one CVE")
+    p.add_argument("--class", dest="klass", help="a ZeroProtocol class name, e.g. idor, ssrf")
+    p.add_argument("--since", help="only records dated on or after YYYY or YYYY-MM-DD")
+    p.add_argument("--bounty", action="store_true", help="only where a bounty was disclosed")
+    p.add_argument("--any", action="store_true", help="match ANY term instead of all")
+    p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser("show", parents=[common], help="one record and the URL to fetch")
+    p.add_argument("id")
+    p.set_defaults(func=cmd_show)
+
+    sub.add_parser("sources", parents=[common],
+                   help="the sources and what each contributes").set_defaults(func=cmd_sources)
+    sub.add_parser("stats", parents=[common],
+                   help="what is in the index").set_defaults(func=cmd_stats)
+
+    args = ap.parse_args()
+    if not args.cmd:
+        ap.print_help()
+        return ERR
+    # `search` is the only subcommand with these; give the others harmless defaults so the
+    # shared matcher does not need to know which subcommand called it.
+    for attr in ("source", "program", "cve", "klass", "since", "bounty", "any", "terms"):
+        if not hasattr(args, attr):
+            setattr(args, attr, None)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
