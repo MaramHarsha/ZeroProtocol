@@ -44,6 +44,13 @@ Follow `skills/zp-report/SKILL.md` and `templates/report.md`. The shape:
 
 - **Impact first.** Sentence one says what an attacker gets, not what technology is involved.
 - The title carries the endpoint and the impact - it is the only part guaranteed to be read.
+- **Write the Impact section against the bar this class is actually held to.** `zp-intel priors
+  "<class>"` gives the measured disclosed-bounty rate. Where it is low, the record is telling you
+  that reports in this class routinely fail on impact, so the section has to do real work: name
+  the file that was read, the person whose data crossed the boundary, the boundary the product
+  promises. "Information disclosure" as a sentence is why that class pays 46% of the time and
+  directory listing pays 13%. This shapes the wording only - it never changes the severity, which
+  is whatever the verifier's evidence supports.
 - Under ~600 words. Length reads as padding.
 - Plain declarative sentences. No "malicious actor", no "leveraging this attack vector", no
   urgency theatre, no emoji, no exclamation marks.

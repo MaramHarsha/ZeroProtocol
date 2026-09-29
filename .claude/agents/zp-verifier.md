@@ -63,6 +63,30 @@ GitHub issues, published audits, and a web search for `<target> <endpoint> <clas
 listed in an audit as accepted risk is dead. But check one thing before killing it: is this a
 **bypass of a deployed fix**? That is a new bug and often a better one.
 
+```bash
+zp-intel dedup <program> <the finding's key terms>   # exit 8 == read them before passing it
+```
+
+**7b. Does the claim match what this class actually gets paid for?**
+
+```bash
+zp-intel priors "<class>"
+```
+
+Base rates over 12,768 labelled disclosed reports. Use it as a **prompt for a harder
+question**, never as the verdict itself:
+
+- a class with many reports and a low disclosed-bounty rate (clickjacking 131 reports at 30%,
+  path traversal 245 at 34%) is one a lot of people report and mostly do not get paid for. Check
+  that this finding rests on more than the evidence all of them had.
+- a reflected finding sitting next to a plausible stored sibling is worth one more question to
+  the hunter: stored XSS discloses a bounty 19 points more often than reflected does.
+- a falling class is **not** a refutation. Open redirect still pays about half the time when
+  disclosed; what died is the atomic submission. If the finding is a feeder class with no chain,
+  that is a CHAIN-REQUIRED, which the triage gate owns - not a REFUTED.
+
+Never return REFUTED because a number looked low. Refute on evidence, on one of checks 1-9.
+
 **8. Would it survive "that's by design"?**
 Write the developer's best rebuttal in one sentence, then answer it. If you cannot answer it, the
 finding is not ready.

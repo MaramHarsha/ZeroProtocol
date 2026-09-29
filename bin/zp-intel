@@ -11,6 +11,9 @@ No report bodies are stored or redistributed; follow the link to read one. See i
 for provenance.
 
     zp-intel stats                          what is in the index
+    zp-intel priors                         measured base rates per class: what is disclosed now
+    zp-intel priors --sort trend             which classes are rising and which are dying
+    zp-intel priors --gaps                   families this pack has no skill for
     zp-intel program shopify                priors - what gets found and paid here
     zp-intel class idor --min-bounty 500    learn a class from reports that paid
     zp-intel search "password reset" host   free text over titles
@@ -35,6 +38,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 INDEX = REPO / "intel" / "hackerone-reports.csv"
+PRIORS = REPO / "intel" / "class-priors.csv"
 UPSTREAM = ("https://raw.githubusercontent.com/reddelexc/hackerone-reports/master/data.csv")
 
 DUPES_FOUND = 8
@@ -245,6 +249,73 @@ def cmd_dedup(args) -> int:
     return DUPES_FOUND if strong else 0
 
 
+def cmd_priors(args) -> int:
+    """Measured base rates per vulnerability class - the calibration layer.
+
+    Answers two questions a checklist cannot: which classes are actually being disclosed
+    NOW, and which ones get closed without a bounty. Use it to pick what to hunt and to
+    sanity-check a severity claim before writing. Derived counts only, no report text.
+    """
+    if not PRIORS.is_file():
+        print(f"zp-intel: no priors file at {PRIORS}", file=sys.stderr)
+        print("          this ships with the repo; re-clone or restore it", file=sys.stderr)
+        return 1
+    with PRIORS.open(encoding="utf-8", errors="replace") as fh:
+        rows = list(csv.DictReader(fh))
+
+    def num(r, k):
+        try:
+            return float(r.get(k) or 0)
+        except ValueError:
+            return 0.0
+
+    if args.skill:
+        want = args.skill if args.skill.startswith("zp-") else f"zp-{args.skill}"
+        rows = [r for r in rows if r.get("zp_skill") == want]
+    elif args.q:
+        q = args.q.lower()
+        aliases = CLASS_ALIASES.get(q, [q])
+        rows = [r for r in rows
+                if any(a in r["weakness"].lower() for a in aliases)
+                or q in (r.get("zp_skill") or "").lower()]
+    if args.gaps:
+        rows = [r for r in rows if r.get("zp_skill") == "NONE-gap"]
+
+    key = {"reports": lambda r: -num(r, "reports"),
+           "trend": lambda r: -num(r, "trend_pts"),
+           "bounty": lambda r: -num(r, "bounty_pct")}[args.sort]
+    rows.sort(key=key)
+    rows = rows[:args.limit]
+
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    if not rows:
+        print("\n  nothing matched. `zp-intel priors` with no filter lists every class.\n")
+        return 0
+    print(f"\n  measured over 12,768 labelled disclosed HackerOne reports "
+          f"(379 programs, 2013-2026)")
+    print(f"  sorted by {args.sort}; share windows are 2014-2020 vs 2023-2026\n")
+    print(f"  {'weakness':44} {'owner':22} {'n':>5} {'paid':>5} {'trend':>7}")
+    print(f"  {'-' * 44} {'-' * 22} {'-' * 5} {'-' * 5} {'-' * 7}")
+    for r in rows:
+        t = num(r, "trend_pts")
+        arrow = "rising" if t >= 1 else ("falling" if t <= -1 else "flat")
+        owner = r.get("zp_skill") or "?"
+        print(f"  {r['weakness'][:44]:44} {owner:22} {r['reports']:>5} "
+              f"{r['bounty_pct'] + '%':>5} {t:>+5.1f} {arrow}")
+    print("\n  n        = labelled disclosed reports for this weakness")
+    print("  paid     = share with a PUBLICLY DISCLOSED bounty. A lower bound: many paid")
+    print("             reports never disclose the amount, so read it as relative, not absolute.")
+    print("  trend    = percentage points of share gained or lost between the two windows.")
+    print("             A direction, not a rate: the windows differ in size and the recent one")
+    print("             is still filling. Falling classes are still real bugs - they just need")
+    print("             a stronger impact story to get paid.")
+    print("  NONE-gap = no zp-* skill in this pack owns that family. See intel/README.md.")
+    print("  There is no severity column: the sources do not label severity comparably.\n")
+    return 0
+
+
 def cmd_update(args) -> int:
     INDEX.parent.mkdir(parents=True, exist_ok=True)
     print(f"  fetching {UPSTREAM}")
@@ -299,6 +370,14 @@ def main() -> int:
     p.set_defaults(func=cmd_dedup)
 
     sub.add_parser("top", parents=[common], help="highest disclosed bounties").set_defaults(func=cmd_top)
+    p = sub.add_parser("priors", parents=[common],
+                       help="measured base rates per class - what is disclosed now, what gets paid")
+    p.add_argument("q", nargs="?", help="a class name (zp-* or a weakness substring)")
+    p.add_argument("--skill", help="only the classes this zp-* skill owns")
+    p.add_argument("--gaps", action="store_true", help="only families no zp-* skill owns")
+    p.add_argument("--sort", choices=("reports", "trend", "bounty"), default="reports")
+    p.set_defaults(func=cmd_priors)
+
     sub.add_parser("update", parents=[common], help="refresh the index from upstream").set_defaults(func=cmd_update)
 
     args = ap.parse_args()

@@ -22,5 +22,5 @@ ZeroProtocol governs authorized security testing in this project. Three laws, in
 report costs reputation that is the only currency in bug bounty.
 
 **How to apply:** load the `zeroprotocol` skill when a target is given; it owns the phase
-pipeline and routes to the thirty zp-* skills. Never auto-submit a report - a human approves
+pipeline and routes to the 66 zp-* skills. Never auto-submit a report - a human approves
 every submission. See [[zp-stop-points]] and [[zp-workspace]].

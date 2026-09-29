@@ -1,3 +1,4 @@
 - [ZeroProtocol operating rules](zp-operating-rules.md) — scope gate is a program not a promise; no theoretical findings; evidence before claim; never auto-submit
 - [ZeroProtocol stop points](zp-stop-points.md) — where to stop after confirming each class; the actions that turn a bounty report into a violation
 - [ZeroProtocol workspace](zp-workspace.md) — .zeroprotocol/ layout; state lives in files, not the session; record coverage and outcomes
+- [ZeroProtocol class priors](zp-class-priors.md) — measured base rates over 16,621 disclosed reports; access control is the biggest riser; how to read the numbers without over-trusting them

@@ -1,11 +1,11 @@
 ---
 name: zeroprotocol
-description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its thirty-five zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
+description: ZeroProtocol - the unified authorized bug-bounty and web-security hunting protocol. Use whenever a target is handed over to test, hunt, recon, map, or audit (a URL, domain, wildcard, program handle, IP, APK/IPA, or source repo), or when the user says "hunt", "bug bounty", "find vulnerabilities", "recon this", "pentest this", "check this target", "what's the attack surface", "ZeroProtocol", or asks to install/set up ZeroProtocol. Owns the phase pipeline (scope gate -> passive recon -> surface map -> ranked class hunt -> proof -> triage -> report), routes to its 66 zp-* skills, and enforces the authorization gate that keeps every packet inside a human-confirmed scope. Also fires when resuming a prior engagement or when asked which ZeroProtocol skill applies.
 ---
 
 # ZeroProtocol
 
-One protocol over thirty-five focused skills. You are handed a target; you return
+One protocol over 66 focused skills. You are handed a target; you return
 reproduced, in-scope, impact-bearing findings written the way a triager wants to read
 them - or you return an honest, evidenced "nothing here", which is also a result.
 
@@ -96,11 +96,24 @@ two** vuln classes. "Just looking around" is the most expensive mode there is.
 ```bash
 zp-intel program <handle>      # what actually gets found and paid on this program
 zp-intel class <class>         # how accepted reports of a class were framed
+zp-intel priors --sort trend   # which classes the field is currently paying for
 ```
 
 A class that appears repeatedly in a program's disclosures means the codebase has a *pattern* of
 it - hunt the siblings nobody reported, and check whether shipped fixes still hold. A bypass of a
 deployed fix is a new bug and never a duplicate. See `zp-intel`.
+
+**The measured prior, over 12,768 labelled disclosed reports across 379 programs.** Access
+control is where the field has moved: `Improper Access Control` went from 3.3% of labelled
+disclosures in 2014-2020 to 11.0% in 2023-2026 (+7.6 points, the largest rise of any class, and
+the largest class in the set at 734 reports), IDOR from 1.7% to 4.5%, business logic 2.3% to 3.9%.
+Over the same span CSRF fell from 5.0% to 1.7%, open redirect from 2.9% to 1.2%, and clickjacking
+from 1.4% to 0.1%. When the surface offers a choice and nothing else breaks the tie, take the
+boundary bug.
+
+This calibrates the queue; it does not overrule the surface in front of you. A falling class is
+still a real bug - it just needs a stronger impact story to get paid, which is `zp-triage`'s
+problem, not the queue's. Limits and method: `intel/README.md`.
 
 ### Budget
 
@@ -151,10 +164,17 @@ every hard block, and every new recon artifact**.
 
 ```
 score = class weight + 5 (if it is a parameter) + 55 (if it came from a leaked secret)
+                     + 10 (if zp-intel priors shows the class rising) - 10 (if falling)
 class weight:  rce 100 | ato 95 | tenant-break 90 | sqli 85 | ssrf 80 | idor 75
                authz 70 | upload 65 | deser 60 | xss 55 | smuggling 50 | cache 45
                graphql 40 | cors 35 | info-leak 30
 ```
+
+The class weight is **impact** - what the bug is worth if it is there. The trend adjustment is
+**likelihood** - whether the field is still finding and getting paid for it. They are different
+questions and the queue needs both: `zp-intel priors --sort trend` supplies the second. Rising as
+of the current measurement: access control, IDOR, business logic, path traversal, misconfiguration.
+Falling: CSRF, clickjacking, open redirect, generic crypto issues.
 
 Buckets: `P1` / `P2` / `blocked` / `chain-pending` / `killed`. A 401 on `/api/admin/` is
 a **P1**, not a dead end - it proves the route exists.
@@ -394,6 +414,24 @@ Known-CVE skills are checks against a *specific* published vulnerability, and th
 exposure and stop. They never carry a post-exploitation path, however available the access
 looks - see `zp-cve-2026-41940` for the reasoning, which applies to every skill of this
 shape added later.
+
+## What this pack does not cover
+
+Say this out loud when it applies, rather than improvising with a skill that does not fit.
+
+**Memory safety on native code.** Measured against the disclosure record, the memory-safety
+family - memory corruption, use-after-free, buffer overflows, out-of-bounds access - is 723
+disclosed reports with the *highest* bounty rates in the whole set (82% for memory corruption,
+63% for buffer over-read). No skill here owns it, on purpose: those reports come from the
+Internet Bug Bounty, curl, Node.js and similar open-source C/C++ programs, and the work is
+fuzzing and crash triage with sanitizer builds - a different discipline with different tooling,
+not a web pipeline. `zp-intel priors --gaps` lists the family. If a native codebase is the
+target, say the pack does not cover it.
+
+**Also out of frame by design:** anything destructive or volumetric, mass or untargeted
+scanning, detection evasion, post-exploitation and persistence, and social engineering. These
+are excluded by nearly every program's policy, and `zp-redteam-mode` is a *higher* authorization
+bar rather than an exemption from this list.
 
 The per-class skill shape used throughout this pack (context-to-payload mapping, the unique
 numeric canary, confirm-or-kill, high-value targets) descends from `elementalsouls/Claude-BugHunter`

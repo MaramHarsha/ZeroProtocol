@@ -1,7 +1,7 @@
 # ZeroProtocol
 
 This repository is **ZeroProtocol**: a unified skill pack for authorized bug-bounty and
-web-security work. Thirty `zp-*` skills behind one router skill, plus three helper
+web-security work. Sixty-six `zp-*` skills behind one router skill, plus six helper
 programs that make the authorization boundary mechanical instead of aspirational.
 
 ## If the user just cloned this and said "check this" / "set this up" / "install this"

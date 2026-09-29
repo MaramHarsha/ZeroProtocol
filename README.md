@@ -84,12 +84,14 @@ pitfalls that make reports get closed.
 Each re-checks `zp-scope` itself, because a subagent inherits none of the session's discipline.
 The validator enforces that: an agent with network-capable tools and no gate is a hard error.
 
-## The four helper programs
+## The six helper programs
 
 ```bash
 zp-scope check https://api.target.com/v1   # 0 allow · 1 deny · 3 unconfirmed · 4 no scope file
 zp-doctor                                  # what works on this box, and how it degrades
 zp-init target.com                         # scaffold .zeroprotocol/
+zp-intel priors --sort trend               # measured base rates; dedup and program priors
+zp-reports                                 # the exploit and CVE corpus tooling
 zp-memory-seed                             # seed the operating notes into this project's memory
 ```
 
@@ -102,6 +104,29 @@ because nobody signed off on the new hosts.
 required tooling beyond `python3 curl dig git openssl jq`; everything else has a documented
 fallback, and where there is no honest fallback (`nuclei`) the skills say the capability is
 unavailable rather than substituting a weaker check and calling it coverage.
+
+## Calibrated on the disclosure record
+
+The pack does not only carry technique; it carries **measurement**. `intel/class-priors.csv` holds
+base rates for 68 weakness classes, derived from 12,768 labelled publicly disclosed HackerOne
+reports across 379 programs, 2013-2026.
+
+```bash
+zp-intel priors --sort trend    # which classes the field is currently paying for
+zp-intel priors --gaps          # families this pack deliberately does not cover
+```
+
+It changes two decisions. The **queue** ranks by likelihood as well as impact — access control
+went from 3.3% of labelled disclosures in 2014-2020 to 11.0% in 2023-2026, the largest rise of any
+class, while CSRF fell 5.0% → 1.7% and clickjacking 1.4% → 0.1%. And the **kill gate** gets
+calibrated: `Insufficient Logging` has 24 disclosed reports and zero disclosed bounties; stored XSS
+discloses a bounty 19 points more often than reflected, so a reflected finding is worth ten more
+minutes hunting its stored sibling.
+
+Read as a prior, never a verdict. Disclosure is not a census, the bounty rate is a lower bound
+because amounts are often withheld, and severity is the disclosure's own label. Method and the
+full list of limits are in [`intel/README.md`](intel/README.md). No report text is vendored —
+only counts and public links.
 
 ## What it will not do
 

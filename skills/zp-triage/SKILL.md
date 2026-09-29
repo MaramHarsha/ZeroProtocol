@@ -85,6 +85,66 @@ data exposures are published on the target's own website.
 
 ---
 
+## Calibration - what the disclosure record says about your verdict
+
+The table above is judgement. This is measurement: base rates over 12,768 labelled publicly
+disclosed HackerOne reports, 379 programs, 2013-2026 (`zp-intel priors`). `paid` is the share of
+that class's disclosures carrying a **publicly disclosed** bounty - a lower bound, useful for
+ranking classes against each other and nothing more.
+
+Run it on the class you are about to report:
+
+```bash
+zp-intel priors "<your class>"
+```
+
+**Classes the record says are hard to get paid for.** A finding here is not automatically a
+KILL - it is a demand for a stronger impact story than you currently have.
+
+| Class | n | paid | What the number is telling you |
+|---|---|---|---|
+| Insufficient Logging | 24 | **0%** | not one disclosed bounty. Report it as hygiene in a pentest, never as a bounty finding |
+| Information Exposure Through Directory Listing | 38 | 13% | the listing is not the bug. Name the file you read and what was in it, or kill it |
+| Information Exposure Through Sent Data | 25 | 16% | you must show the recipient had no right to it |
+| Modification of Assumed-Immutable Data | 19 | 5% | one disclosed bounty in nineteen reports - prove the state change actually matters |
+| Improper Certificate Validation | 52 | 29% | needs a demonstrated interception path, not a scanner note |
+| UI Redressing (Clickjacking) | 131 | 30% | and collapsed from 1.4% of disclosures to 0.1%. Effectively dead atomically |
+| Cleartext / insecurely stored credentials | 76 / 54 | 31-33% | show retrieval by someone who should not have it |
+| Information Exposure Through an Error Message | 39 | 33% | the stack trace must hand over something you then use |
+| Path Traversal | 245 | 34% | rising, but only pays with a named sensitive file actually read |
+
+**Classes the record says pay when proven.** These justify spending the thirty minutes.
+
+| Class | n | paid | Framing the disclosures used |
+|---|---|---|---|
+| Improper Authorization | 46 | 67% | a named boundary crossed, both sides shown |
+| XSS - DOM | 162 | 62% | executed in a browser, in a privileged context |
+| Privilege Escalation | 417 | 61% | the capability gained, stated as a verb |
+| Privacy Violation | 81 | 59% | a specific person's data, not "PII" |
+| XSS - Stored | 585 | 58% | vs 39% for reflected - the persistence and the audience are the argument |
+| IDOR | 329 | 57% | two accounts, both sides, rising +2.8 points |
+| Improper Access Control | 734 | 52% | the largest class in the set and the largest riser, +7.6 points |
+
+Three things to take from this, which change how you triage rather than what you hunt:
+
+- **Stored beats reflected by 19 points** on the same underlying bug. If you have a reflected
+  finding, spend ten more minutes looking for the stored sibling before you write.
+- **Falling share is a framing signal, not a kill.** Open redirect still pays 49% of the time
+  when disclosed, yet its share of disclosures fell from 2.9% to 1.2%. What died is the
+  *atomic* submission. Chain it or drop it - which is what "Kill on sight" already says.
+- **A high report count with a low paid rate** (clickjacking: 131 reports, 30%; path traversal:
+  245 reports, 34%) means a lot of people keep reporting that class and mostly not getting paid.
+  Do not join them on the strength of the same evidence they had.
+
+**Do not launder these numbers into certainty.** Disclosure is not a census - programs choose
+what to disclose and most reports are never disclosed. The bounty rate is a lower bound because
+amounts are often withheld. The trend windows differ in size and the recent one is still filling.
+And there is deliberately **no severity column**: the sources do not label severity comparably,
+so score against the program's own system, never a corpus average. These numbers calibrate your
+prior; your evidence decides. `intel/README.md` states the limits in full.
+
+---
+
 ## Dedup
 
 Duplicates are the largest single cause of wasted effort in bug bounty. Spend three minutes.

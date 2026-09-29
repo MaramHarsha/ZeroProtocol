@@ -1,6 +1,6 @@
 ---
 name: zp-intel
-description: ZeroProtocol prior-art layer over 14,900+ publicly disclosed bug bounty reports. Use before hunting a program to learn what actually gets found and paid there, before choosing a class to see how accepted reports were framed, and always at triage time to check whether a finding is a duplicate. Wraps the zp-intel index, which holds public metadata and report links only. Exit code 8 from a dedup check means likely duplicate.
+description: ZeroProtocol prior-art and calibration layer over 14,900+ publicly disclosed bug bounty reports plus measured base rates for 68 vulnerability classes. Use before hunting a program to learn what actually gets found and paid there, before choosing a class to see which classes are rising or dying and how accepted reports were framed, and always at triage time to check whether a finding is a duplicate. Wraps the zp-intel index, which holds public metadata, report links and derived counts only. Exit code 8 from a dedup check means likely duplicate.
 ---
 
 # zp-intel - hunt where the bugs already were
@@ -27,6 +27,44 @@ report bodies are vendored - follow the link to read one. Provenance and licensi
 zp-intel stats          # what is in it
 zp-intel update         # refresh from upstream
 ```
+
+---
+
+## The calibration layer - `zp-intel priors`
+
+The index tells you about **one program**. `intel/class-priors.csv` tells you about **the
+field**: 68 weakness classes measured over 12,768 labelled disclosed HackerOne reports
+across 379 programs, 2013-2026, each mapped to the skill that owns it.
+
+```bash
+zp-intel priors                      # every class, by volume
+zp-intel priors --sort trend         # what is rising and what is dying
+zp-intel priors --sort bounty        # which classes actually get paid
+zp-intel priors --skill authz        # the classes one skill owns
+zp-intel priors --gaps               # families no skill in this pack covers
+```
+
+Use it twice: at **phase 0** to choose what to hunt, and at **phase 7** to sanity-check the
+severity you are about to claim.
+
+**What the measurement says.** Access control has become the centre of the field. "Improper
+Access Control - Generic" went from 3.3% of labelled disclosures in 2014-2020 to 11.0% in
+2023-2026 - the largest rise of any class - and IDOR from 1.7% to 4.5%. Together with business
+logic that is the highest-yield third of the queue. Meanwhile CSRF fell from 5.0% to 1.7%,
+clickjacking from 1.4% to 0.1%, and open redirect from 2.9% to 1.2%.
+
+| Read it as | Not as |
+|---|---|
+| a rising class is where triage is currently accepting impact | proof a falling class is unexploitable |
+| a low `paid` rate means this class needs a **stronger impact story**, not that it is worthless | a probability your report pays |
+| `paid` ranks classes against each other | an absolute rate - undisclosed bounties make every figure a lower bound |
+| a gap family is outside this pack's scope | a family nobody pays for - memory safety pays best of all, on OSS programs |
+
+**The honest caveats, because a number in a table invites over-trust.** Disclosure is not a
+census: programs choose what to disclose and most reports are never disclosed. The two windows
+differ in size. Some of the collapse in `XSS - Generic` is HackerOne relabelling to
+reflected/stored/DOM rather than XSS disappearing. Severity is the disclosure's own label, not a
+recomputed CVSS. Full method and limits in `intel/README.md`.
 
 ---
 
@@ -152,4 +190,7 @@ Class technique -> the matching hunter skill.
 Dedup verdict -> `zp-triage` (question 6), then `zp-report`, which should link any adjacent
 prior disclosure.
 
-Index source: `reddelexc/hackerone-reports`. See `intel/README.md` for provenance.
+Sources: `intel/hackerone-reports.csv` from `reddelexc/hackerone-reports`;
+`intel/class-priors.csv` derived from a 221,091-write-up corpus of public disclosures across 126
+sources, deduplicated to 109,885 unique reports of which 12,768 carry a class label. Method, licensing and the honest limits
+of both are in `intel/README.md`. Neither file carries anyone's report text.
