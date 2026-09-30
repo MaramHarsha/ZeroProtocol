@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -287,7 +288,25 @@ def main() -> int:
         if not errors and not warns:
             print("\nclean")
 
+    # Host adapters are GENERATED from the Claude agent and command definitions. A stale one
+    # is not cosmetic: the OpenCode agents encode the network restrictions as `permission:`
+    # denials, so an adapter that has drifted can hand network access to an agent meant to
+    # have none. Checked here because this is the script the authoring rules say to run.
+    adapters = REPO / "scripts" / "build_adapters.py"
+    if adapters.is_file():
+        rc = subprocess.run([sys.executable, str(adapters), "--check"],
+                            capture_output=True, text=True)
+        if rc.returncode != 0:
+            for line in (rc.stderr or "").strip().split("\n"):
+                if line.strip():
+                    errors.append(line.strip())
+        elif not args.quiet:
+            print("\n  host adapters up to date (opencode)")
+
     if errors:
+        if args.quiet:
+            for x in errors:
+                print(f"  X {x}", file=sys.stderr)
         return 1
     return 1 if (args.strict and warns) else 0
 

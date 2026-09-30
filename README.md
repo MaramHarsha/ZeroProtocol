@@ -51,6 +51,36 @@ up anything it would displace, and `./install.sh --remove` undoes all of it.
 Or just open Claude Code in this directory and say **"check this"** — `CLAUDE.md` tells Claude
 what to do.
 
+### Other agents: Codex, OpenCode, Hermes
+
+The 68 skills need no conversion. `skills/<name>/SKILL.md` with `name` and `description`
+frontmatter is exactly what Claude Code, Codex CLI, OpenCode and the
+[Agent Plugins 1.0](https://agent-plugins.org/specification) standard all read, so the same
+files serve every host.
+
+```bash
+./install-portable.sh --host codex       # ~/.agents/skills + ~/.codex/AGENTS.md
+./install-portable.sh --host opencode    # ~/.config/opencode/{skills,agents,commands}
+./install-portable.sh --host hermes      # ~/.hermes/skills
+./install-portable.sh --host all         # every host
+```
+
+| Host | How it loads | What you get |
+|---|---|---|
+| **Claude Code** | `~/.claude/skills`, `~/.claude/agents`, `~/.claude/commands` | everything: 68 skills, 5 agents, 16 slash commands |
+| **Codex CLI** | `~/.agents/skills` | 68 skills, invoked with `$zeroprotocol`. No subagents — Codex has no subagent format, and its custom prompts are deprecated upstream in favour of skills |
+| **OpenCode** | `~/.config/opencode/{skills,agents,commands}` | everything. The 5 agents are translated to `mode: subagent` with the Claude `tools:` restrictions re-expressed as `permission:` denials |
+| **Hermes** | `~/.hermes/skills`, or `hermes plugins install MaramHarsha/ZeroProtocol` | 68 skills. The repository root is already a conformant Agent Plugins 1.0 package — `plugin.json` plus `skills/` |
+
+The seven `bin/zp-*` programs are stdlib Python and POSIX shell, so **the scope gate works
+identically on every host** — `zp-scope check` is a program, and any agent that can run a shell
+obeys the same exit codes. `AGENTS.md` carries the operating rules for hosts that read it, the
+way `CLAUDE.md` does for Claude Code.
+
+OpenCode agents and commands are generated, not maintained by hand
+(`scripts/build_adapters.py`), and `scripts/validate_skills.py` fails if they drift — a stale
+adapter could hand network access to an agent meant to have none.
+
 ## The 68 skills
 
 | | |

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zeroprotocol",
+  "version": "1.1.0",
+  "description": "Authorized bug bounty and web security skills with a code-enforced scope gate and a 138,400 write-up prior-art library.",
+  "author": {
+    "name": "MaramHarsha",
+    "url": "https://github.com/MaramHarsha"
+  },
+  "homepage": "https://github.com/MaramHarsha/ZeroProtocol",
+  "repository": "https://github.com/MaramHarsha/ZeroProtocol",
+  "license": "MIT",
+  "keywords": [
+    "bug-bounty",
+    "security",
+    "web-security",
+    "appsec",
+    "vulnerability-research",
+    "pentesting",
+    "recon",
+    "authorized-testing"
+  ]
+}
