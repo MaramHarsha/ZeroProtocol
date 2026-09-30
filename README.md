@@ -4,16 +4,18 @@
 
 # ZeroProtocol
 
-One protocol for authorized bug-bounty and web-security work, as **68 Claude Code skills**,
-**5 agents**, **16 slash commands** and seven helper programs. Clone it, ask Claude to check it, give it a target.
+One protocol for authorized bug-bounty and web-security work: **68 skills**, **5 agents**,
+**16 slash commands** and seven helper programs, running on **Claude Code, Codex CLI, OpenCode
+and Hermes**. Clone it, point your agent at it, give it a target.
 
 The authorization boundary is a program, not a promise: every skill that sends traffic calls
 `zp-scope check` and obeys the exit code, so an out-of-scope host is refused mechanically rather
-than remembered politely.
+than remembered politely. Because the gate is a program rather than an instruction, it behaves
+identically on every host.
 
 ```
 you:     hunt https://app.example.com
-claude:  phase 0  mode?  -> bug bounty
+agent:   phase 0  mode?  -> bug bounty
          phase 1  scope  -> .zeroprotocol/scope.yaml written, NOT confirmed
                             passive recon starts; active testing stays locked
          you:     zp-scope confirm --by me --authorization https://hackerone.com/example
@@ -31,10 +33,17 @@ claude:  phase 0  mode?  -> bug bounty
 ```bash
 git clone https://github.com/MaramHarsha/ZeroProtocol
 cd ZeroProtocol
-./install.sh
+
+./install.sh                             # Claude Code
+./install-portable.sh --host codex       # Codex CLI
+./install-portable.sh --host opencode    # OpenCode
+./install-portable.sh --host hermes      # Hermes
+./install-portable.sh --host all         # every host but Claude Code
 ```
 
-Then open Claude Code in any directory and say `hunt <your authorized target>`.
+Then open your agent in any directory and say `hunt <your authorized target>`.
+
+### Claude Code
 
 `install.sh` symlinks `skills/` into `~/.claude/skills/` so the skills load in every session,
 seeds the operating-discipline notes into the project memory directory, adds a marker-delimited
@@ -114,6 +123,11 @@ pitfalls that make reports get closed.
 
 Each re-checks `zp-scope` itself, because a subagent inherits none of the session's discipline.
 The validator enforces that: an agent with network-capable tools and no gate is a hard error.
+
+Available on **Claude Code and OpenCode**. Codex has no subagent format, so the skills there run
+in the main session instead. On OpenCode the Claude `tools:` restrictions are re-expressed as
+`permission:` denials — `zp-report-drafter` ends up with no shell and no network either way — and
+those adapters are generated from the Claude definitions, never hand-maintained.
 
 ## The seven helper programs
 
